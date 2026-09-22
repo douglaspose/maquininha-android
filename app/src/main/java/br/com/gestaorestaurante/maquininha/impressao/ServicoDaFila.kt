@@ -6,8 +6,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.util.Base64
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import br.com.gestaorestaurante.maquininha.MainActivity
@@ -56,7 +56,7 @@ class ServicoDaFila : LifecycleService() {
                 for (trabalho in resposta.trabalhos) {
                     val marca = resposta.marca
                         ?.takeIf { trabalho.comMarca }
-                        ?.let { escposParaMarca(it.escpos, it.largura, it.altura) }
+                        ?.let { escposParaMarca(it.escpos) }
                     val cupom = lerConteudoDaFila(trabalho.titulo, trabalho.conteudo, marca)
                         .paraLargura(impressora.colunas)
                     val falha = impressora.imprimir(cupom)
@@ -116,50 +116,21 @@ class ServicoDaFila : LifecycleService() {
         private const val INTERVALO = 3000L
 
         fun ligar(contexto: Context) {
-            contexto.startService(Intent(contexto, ServicoDaFila::class.java))
+            /*
+             * `startForegroundService`, e não `startService`: do Android 8 em
+             * diante um serviço iniciado com o aplicativo em segundo plano é
+             * recusado na hora. O contrato dele é chamar `startForeground`
+             * em até cinco segundos, e é a primeira coisa que o `onCreate`
+             * faz.
+             */
+            ContextCompat.startForegroundService(
+                contexto,
+                Intent(contexto, ServicoDaFila::class.java),
+            )
         }
 
         fun desligar(contexto: Context) {
             contexto.stopService(Intent(contexto, ServicoDaFila::class.java))
         }
     }
-}
-
-/**
- * A logomarca chega pronta em ESC/POS porque o contrato foi escrito para uma
- * térmica de rede, onde basta escrever os bytes. A impressora da maquininha
- * não fala ESC/POS: fala a SDK do fabricante, que quer um bitmap.
- *
- * Então desembrulha-se o raster de dentro do `GS v 0` e entrega-se o bitmap.
- * É menos trabalho do que mudar o contrato do servidor — e o servidor não
- * precisa saber que existe maquininha.
- */
-internal fun escposParaMarca(base64: String, largura: Int, altura: Int): Cupom.Marca? {
-    val bytes = try {
-        Base64.decode(base64, Base64.DEFAULT)
-    } catch (e: IllegalArgumentException) {
-        return null
-    }
-    // `GS v 0` = 0x1D 0x76 0x30, seguido do modo e de xL xH yL yH.
-    var i = 0
-    while (i + 7 < bytes.size) {
-        if (bytes[i] == 0x1D.toByte() && bytes[i + 1] == 0x76.toByte() &&
-            bytes[i + 2] == 0x30.toByte()
-        ) {
-            val bytesPorLinha = (bytes[i + 4].toInt() and 0xFF) or
-                ((bytes[i + 5].toInt() and 0xFF) shl 8)
-            val linhas = (bytes[i + 6].toInt() and 0xFF) or
-                ((bytes[i + 7].toInt() and 0xFF) shl 8)
-            val inicio = i + 8
-            val tamanho = bytesPorLinha * linhas
-            if (tamanho <= 0 || inicio + tamanho > bytes.size) return null
-            return Cupom.Marca(
-                bytes = bytes.copyOfRange(inicio, inicio + tamanho),
-                largura = if (largura > 0) largura else bytesPorLinha * 8,
-                altura = if (altura > 0) altura else linhas,
-            )
-        }
-        i++
-    }
-    return null
 }

@@ -31,7 +31,7 @@ dependencyResolutionManagement {
          * Stone na máquina.
          */
         val local = Properties().apply {
-            val arquivo = File(rootDir, "local.properties")
+            val arquivo = rootDir.resolve("local.properties")
             if (arquivo.exists()) arquivo.inputStream().use { load(it) }
         }
         val tokenStone = local.getProperty("stone.packagecloud.token")
