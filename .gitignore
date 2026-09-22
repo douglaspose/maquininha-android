@@ -1,10 +1,17 @@
-*.iml
+# Saída de build de qualquer módulo, não só da raiz: o que o Gradle gera
+# ninguém precisa versionar, e são milhares de arquivos.
+build/
 .gradle/
-/local.properties
-/.idea/
-.DS_Store
-/build
-/captures
+.kotlin/
+*.apk
+*.aab
+
+# Caminho do SDK e credenciais da credenciadora: são desta máquina.
+local.properties
+
+.idea/
+*.iml
+captures/
 .externalNativeBuild
 .cxx
-local.properties
+.DS_Store

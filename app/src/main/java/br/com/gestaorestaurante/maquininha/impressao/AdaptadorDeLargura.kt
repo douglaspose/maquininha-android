@@ -19,6 +19,9 @@ package br.com.gestaorestaurante.maquininha.impressao
  * espaços e arte em ASCII. Esses saem tortos, e continuarão saindo até a
  * largura vir do servidor.
  */
+/** O vão que separa a descrição do valor: dois espaços ou mais. */
+private val ESPACOS_DO_MEIO = Regex("""\s{2,}""")
+
 fun Cupom.paraLargura(colunas: Int): Cupom {
     if (colunas <= 0) return this
     return copy(linhas = linhas.flatMap { it.paraLargura(colunas) })
@@ -30,7 +33,7 @@ private fun Cupom.Linha.paraLargura(colunas: Int): List<Cupom.Linha> {
     val texto = this.texto.trimEnd()
     if (texto.length <= cabem) return listOf(copy(texto = texto))
 
-    val separacao = Regex("\s{2,}").findAll(texto).lastOrNull()
+    val separacao = ESPACOS_DO_MEIO.findAll(texto).lastOrNull()
     if (separacao != null) {
         val esquerda = texto.substring(0, separacao.range.first).trimEnd()
         val direita = texto.substring(separacao.range.last + 1).trim()
