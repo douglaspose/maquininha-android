@@ -1,0 +1,13 @@
+# Copie para `local.properties` (que o git ignora) e preencha.
+
+# Onde está o SDK do Android. O Android Studio escreve esta linha sozinho na
+# primeira vez que abre o projeto.
+sdk.dir=C\:\Users\Asus\AppData\Local\Android\Sdk
+
+# Token do PackageCloud que a Stone manda por e-mail no onboarding.
+# Só é necessário para compilar o flavor `stone`.
+stone.packagecloud.token=
+
+# Stone Code (a "affiliation key") usado para ativar o aplicativo na primeira
+# execução. Só o flavor `stone` lê isto.
+stone.code=

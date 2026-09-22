@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        O tema do Android só precisa existir para a janela nascer sem barra de
+        ação e com o fundo certo antes do Compose desenhar. Cor de verdade é
+        com o `TemaDaMaquininha`.
+    -->
+    <style name="Tema" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FAFAFA</item>
+    </style>
+</resources>

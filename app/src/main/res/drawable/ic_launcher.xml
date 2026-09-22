@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Uma maquininha de traço simples: some no ícone pequeno sem virar borrão. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#16663C"
+        android:pathData="M0,0h108v108h-108z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,24h40a6,6 0 0 1 6,6v48a6,6 0 0 1 -6,6h-40a6,6 0 0 1 -6,-6v-48a6,6 0 0 1 6,-6zM36,32v16h36v-16z" />
+    <path
+        android:fillColor="#7DD3A0"
+        android:pathData="M38,56h12v8h-12zM58,56h12v8h-12zM38,68h12v8h-12zM58,68h12v8h-12z" />
+</vector>
