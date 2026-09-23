@@ -77,6 +77,12 @@ data class Painel(
     val comandaId: String? = null,
     /** Recado curto para a tela: o que o servidor recusou, ou a rede que caiu. */
     val aviso: String? = null,
+    /**
+     * Sobe a cada PIN recusado. A tela limpa o campo quando ele muda — e não
+     * quando o aviso muda, porque duas tentativas erradas seguidas dão a mesma
+     * mensagem, e o campo precisa limpar nas duas.
+     */
+    val falhasNoPin: Int = 0,
 )
 
 class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
@@ -149,7 +155,11 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                 buscarMesas()
             } catch (e: Exception) {
                 _painel.update {
-                    it.copy(buscando = false, aviso = e.message ?: "Não foi possível entrar.")
+                    it.copy(
+                        buscando = false,
+                        aviso = e.message ?: "Não foi possível entrar.",
+                        falhasNoPin = it.falhasNoPin + 1,
+                    )
                 }
             }
         }

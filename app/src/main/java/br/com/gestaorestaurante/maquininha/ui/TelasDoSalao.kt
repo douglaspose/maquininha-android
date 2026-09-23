@@ -21,6 +21,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +53,11 @@ import br.com.gestaorestaurante.maquininha.api.MesaAberta
 @Composable
 internal fun TelaDePin(painel: Painel, acoes: Acoes) {
     var pin by remember { mutableStateOf("") }
+
+    // PIN recusado limpa o campo, para o operador redigitar sem apagar à mão.
+    LaunchedEffect(painel.falhasNoPin) {
+        if (painel.falhasNoPin > 0) pin = ""
+    }
 
     Column(
         Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
