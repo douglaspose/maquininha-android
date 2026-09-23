@@ -8,10 +8,17 @@ package br.com.gestaorestaurante.maquininha.ui
  * centavo aqui aparece justamente no visor que o cliente confere.
  */
 
-/** 1550 vira "R$ 15,50". Sem Locale do sistema: a maquininha pode estar em en-US. */
+/**
+ * 1550 vira "R$ 15,50". Sem Locale do sistema: a maquininha pode estar em en-US.
+ *
+ * O sinal sai na frente, e não no meio: o que já foi pago aparece na conta
+ * como valor negativo, e a primeira versão mostrava "R$ -22,-94".
+ */
 fun emReais(centavos: Long): String {
-    val reais = centavos / 100
-    val resto = centavos % 100
+    val sinal = if (centavos < 0) "-" else ""
+    val absoluto = if (centavos < 0) -centavos else centavos
+    val reais = absoluto / 100
+    val resto = absoluto % 100
     val comPontos = reais.toString().reversed().chunked(3).joinToString(".").reversed()
-    return "R$ " + comPontos + "," + resto.toString().padStart(2, '0')
+    return "R$ $sinal$comPontos,${resto.toString().padStart(2, '0')}"
 }

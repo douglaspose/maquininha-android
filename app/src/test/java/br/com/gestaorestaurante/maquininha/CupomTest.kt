@@ -61,6 +61,25 @@ class CupomTest {
     }
 
     @Test
+    fun `regua de separacao e cortada, nao quebrada em duas`() {
+        // O que apareceu no primeiro cupom de verdade: 48 hífens viravam uma
+        // linha de 32 e outra de 16, duas réguas tortas no papel.
+        val cupom = lerConteudoDaFila("Cupom", "-".repeat(48), null).paraLargura(32)
+
+        assertEquals(1, cupom.linhas.size)
+        assertEquals("-".repeat(32), cupom.linhas[0].texto)
+    }
+
+    @Test
+    fun `texto repetitivo de verdade continua quebrando`() {
+        // A régua é reconhecida por ser pontuação repetida; uma palavra
+        // repetida é texto e continua sendo quebrada em linhas.
+        val cupom = lerConteudoDaFila("Cupom", "aaaa ".repeat(12).trim(), null).paraLargura(32)
+
+        assertTrue(cupom.linhas.size > 1)
+    }
+
+    @Test
     fun `linha que ja cabe nao e mexida`() {
         val cupom = lerConteudoDaFila("Cupom", "Mesa 7", null).paraLargura(32)
         assertEquals(listOf("Mesa 7"), cupom.linhas.map { it.texto })
@@ -72,5 +91,17 @@ class CupomTest {
         assertEquals("R$ 15,50", emReais(1550))
         assertEquals("R$ 1.234,56", emReais(123456))
         assertEquals("R$ 0,00", emReais(0))
+    }
+
+    /**
+     * O que já foi pago entra na conta como valor negativo. Com o sinal no
+     * meio do número, a tela da mesa mostrava "R$ -22,-94".
+     */
+    @Test
+    fun `valor negativo leva o sinal na frente`() {
+        assertEquals("-R$ 22,94", "-" + emReais(2294))
+        assertEquals("R$ -22,94", emReais(-2294))
+        assertEquals("R$ -1.234,56", emReais(-123456))
+        assertEquals("R$ -0,05", emReais(-5))
     }
 }
