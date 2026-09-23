@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import br.com.gestaorestaurante.maquininha.api.MesaAberta
@@ -204,16 +205,22 @@ private fun MesaNaLista(mesa: MesaAberta, aoTocar: () -> Unit) {
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth(),
     ) {
+        /*
+         * Alinhado pelo topo, e não pelo meio: o valor pertence ao nome da
+         * mesa e fica na linha dele. Centralizado, ele flutuava no meio de um
+         * subtítulo de duas linhas, longe do que nomeia.
+         */
         Row(
             Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.Top,
         ) {
-            Column(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f).padding(end = 12.dp)) {
                 Text(
                     mesa.mesa ?: mesa.nomeCliente ?: "Comanda ${mesa.numero}",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     buildString {
@@ -224,19 +231,31 @@ private fun MesaNaLista(mesa: MesaAberta, aoTocar: () -> Unit) {
                          * comendo.
                          */
                         if (mesa.fechando) append(" · conta pedida")
-                        if (mesa.recebidoEmCentavos > 0) {
-                            append(" · pago ${emReais(mesa.recebidoEmCentavos)}")
-                        }
                     },
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+                /*
+                 * O que já entrou fica numa linha só dele. Emendado no resto,
+                 * quebrava no meio — "… · pago" numa linha e "R$ 45,87" na
+                 * outra —, que é justamente o número que o caixa procura.
+                 */
+                if (mesa.recebidoEmCentavos > 0) {
+                    Text(
+                        "pago ${emReais(mesa.recebidoEmCentavos)}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
             }
             Text(
                 emReais(mesa.faltaEmCentavos),
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
+                maxLines = 1,
                 color = if (mesa.fechando) {
                     MaterialTheme.colorScheme.primary
                 } else {
