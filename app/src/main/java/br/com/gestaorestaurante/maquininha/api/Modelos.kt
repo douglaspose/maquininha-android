@@ -50,34 +50,105 @@ data class ConfirmacaoDeImpressao(
     val erro: String? = null,
 )
 
-// --- Cobrança (contrato proposto, ainda não implementado no servidor) ---
+
+// --- Salão: mesas abertas, conta e pagamento (docs/maquininha.md do sistema) ---
 
 @Serializable
-data class RespostaDeCobrancas(
-    val cobrancas: List<CobrancaPendente> = emptyList(),
+data class PinDoOperador(val pin: String)
+
+@Serializable
+data class RespostaDoOperador(
+    val token: String = "",
+    val nome: String = "",
+    val cargo: String = "",
+    val unidade: String = "",
 )
 
 @Serializable
-data class CobrancaPendente(
-    val id: String,
-    @SerialName("valorEmCentavos") val valorEmCentavos: Long,
-    /** CREDITO, CREDITO_PARCELADO, DEBITO, PIX, VOUCHER. */
+data class RespostaDeMesas(
+    val unidade: String = "",
+    val operador: String = "",
+    /** Sem caixa aberto nenhum pagamento entra; a tela avisa antes de cobrar. */
+    val caixaAberto: Boolean = true,
+    val mesas: List<MesaAberta> = emptyList(),
+)
+
+@Serializable
+data class MesaAberta(
+    val comandaId: String,
+    val numero: Int = 0,
+    /** "Mesa 7", ou nulo quando a comanda não tem mesa (balcão). */
+    val mesa: String? = null,
+    val nomeCliente: String? = null,
+    val pessoas: Int = 1,
+    /** A conta já foi pedida: é onde o caixa costuma estar. */
+    val fechando: Boolean = false,
+    val totalEmCentavos: Long = 0,
+    val recebidoEmCentavos: Long = 0,
+    val faltaEmCentavos: Long = 0,
+)
+
+@Serializable
+data class ContaDaMesa(
+    val comandaId: String = "",
+    val numero: Int = 0,
+    val mesa: String? = null,
+    val nomeCliente: String? = null,
+    val pessoas: Int = 1,
+    val subtotalEmCentavos: Long = 0,
+    val descontoEmCentavos: Long = 0,
+    val taxaServicoEmCentavos: Long = 0,
+    val totalEmCentavos: Long = 0,
+    val recebidoEmCentavos: Long = 0,
+    val faltaEmCentavos: Long = 0,
+    val porPessoaEmCentavos: Long? = null,
+    val itens: List<ItemDaConta> = emptyList(),
+    val pagamentos: List<PagamentoDaConta> = emptyList(),
+)
+
+@Serializable
+data class ItemDaConta(
+    val titulo: String = "",
+    val quantidade: Double = 1.0,
+    val totalEmCentavos: Long = 0,
+)
+
+@Serializable
+data class PagamentoDaConta(
+    val forma: String = "",
+    val valorEmCentavos: Long = 0,
+    val em: String = "",
+)
+
+/**
+ * O que a maquininha conta ao servidor depois de a credenciadora aprovar.
+ *
+ * `referencia` é o que impede o pagamento em dobro: reenviada, o servidor
+ * reconhece o mesmo pagamento em vez de criar outro.
+ */
+@Serializable
+data class PagamentoParaEnviar(
+    val comandaId: String,
+    val referencia: String,
+    /** CREDITO, CREDITO_PARCELADO, DEBITO, PIX ou VOUCHER. */
     val forma: String,
-    val parcelas: Int = 1,
-    /** O que aparece na tela da maquininha: "Mesa 7 · João". */
-    val descricao: String = "",
+    val valorEmCentavos: Long,
+    val nsu: String? = null,
+    val bandeira: String? = null,
+    /** Quitando a conta, o servidor a finaliza na mesma chamada. */
+    val finalizar: Boolean = true,
 )
 
 @Serializable
-data class ResultadoDaCobrancaEnviado(
-    val id: String,
-    /** APROVADA, RECUSADA, CANCELADA ou ERRO. */
-    val resultado: String,
-    val identificadorNaCredenciadora: String? = null,
-    val credenciadora: String? = null,
-    val bandeira: String? = null,
-    val autorizacao: String? = null,
-    val finalDoCartao: String? = null,
-    val parcelas: Int? = null,
-    val motivo: String? = null,
+data class RespostaDoPagamento(
+    val ok: Boolean = false,
+    val jaRegistrado: Boolean = false,
+    val forma: String = "",
+    val faltaEmCentavos: Long = 0,
+    val quitada: Boolean = false,
+    val finalizada: Boolean = false,
 )
+
+/** O corpo de erro do servidor: uma frase pronta para a tela. */
+@Serializable
+data class ErroDoServidor(val erro: String = "")

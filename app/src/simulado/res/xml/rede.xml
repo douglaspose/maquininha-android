@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Só o flavor simulado aceita HTTP puro, e só ele.
+
+    Do Android 9 em diante o sistema recusa texto claro por padrão, e é a
+    regra certa: o token da unidade viaja nesse cabeçalho, e num wi-fi de
+    restaurante ele não pode trafegar aberto. Em produção o servidor é HTTPS.
+
+    Mas o desenvolvimento acontece contra um servidor de bancada em
+    `http://10.0.2.2:3000`, sem certificado nenhum — e é para essa bancada que
+    esta exceção existe. Ela não entra no APK da Stone nem no da Rede.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

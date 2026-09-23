@@ -42,17 +42,23 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
     /** Falha da conversa com o servidor, já com um texto que cabe numa tela. */
     class FalhaNaApi(mensagem: String, causa: Throwable? = null) : IOException(mensagem, causa)
 
+    /** A sessão do operador do turno morreu: quem chamou manda pedir o PIN. */
+    class PrecisaDoPin(mensagem: String) : IOException(mensagem)
+
     private suspend fun <T> chamar(
         caminho: String,
         corpo: String? = null,
+        comOperador: Boolean = false,
         leitura: (String) -> T,
     ): T = withContext(Dispatchers.IO) {
         val config = configuracao.atual()
         if (!config.completa) throw FalhaNaApi("Aparelho sem servidor ou token configurado.")
+        if (comOperador && !config.comOperador) throw PrecisaDoPin("Digite o PIN para começar.")
 
         val requisicao = Request.Builder()
             .url(config.servidor + caminho)
             .header("Authorization", "Bearer ${config.token}")
+            .apply { if (comOperador) header("X-Operador", config.operador) }
             .apply { if (corpo != null) post(corpo.toRequestBody(tipoJson)) else get() }
             .build()
 
@@ -60,14 +66,26 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
             cliente.newCall(requisicao).execute().use { resposta ->
                 val texto = resposta.body?.string().orEmpty()
                 if (!resposta.isSuccessful) {
-                    // 401 tem nome próprio: é o erro que o caixa consegue
-                    // resolver sozinho, reconfigurando o token.
-                    if (resposta.code == 401) throw FalhaNaApi("Token recusado pelo servidor.")
-                    throw FalhaNaApi("Servidor respondeu ${resposta.code}.")
+                    // A mensagem do servidor é escrita para a tela ("Falta
+                    // receber só R$ 12,30"); melhor que "servidor respondeu 409".
+                    val doServidor = try {
+                        json.decodeFromString(ErroDoServidor.serializer(), texto).erro
+                    } catch (e: Exception) {
+                        ""
+                    }
+                    // 401 tem nome próprio: numa chamada de operador é o turno
+                    // que venceu; nas outras, é o token do aparelho.
+                    if (resposta.code == 401) {
+                        if (comOperador) throw PrecisaDoPin(doServidor.ifBlank { "Turno encerrado." })
+                        throw FalhaNaApi(doServidor.ifBlank { "Token recusado pelo servidor." })
+                    }
+                    throw FalhaNaApi(doServidor.ifBlank { "Servidor respondeu ${resposta.code}." })
                 }
                 leitura(texto)
             }
         } catch (e: FalhaNaApi) {
+            throw e
+        } catch (e: PrecisaDoPin) {
             throw e
         } catch (e: IOException) {
             throw FalhaNaApi("Sem resposta do servidor.", e)
@@ -88,29 +106,38 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
         chamar("/api/impressao", corpo) { }
     }
 
-    /**
-     * As cobranças que o caixa mandou para esta maquininha.
-     *
-     * Esta rota ainda não existe no servidor: enquanto não existir, a tela de
-     * cobrança funciona pelo valor digitado na própria maquininha.
-     */
-    suspend fun buscarCobrancas(): RespostaDeCobrancas =
-        chamar("/api/maquininha/cobrancas") {
-            json.decodeFromString(RespostaDeCobrancas.serializer(), it)
+    /** O PIN vira o turno do operador; o PIN em si não fica guardado. */
+    suspend fun entrarComPin(pin: String): RespostaDoOperador {
+        val corpo = json.encodeToString(PinDoOperador.serializer(), PinDoOperador(pin))
+        return chamar("/api/maquininha/entrar", corpo) {
+            json.decodeFromString(RespostaDoOperador.serializer(), it)
+        }.also { configuracao.guardarOperador(it.token, it.nome) }
+    }
+
+    /** As contas abertas do salão. */
+    suspend fun buscarMesas(): RespostaDeMesas =
+        chamar("/api/maquininha/mesas", comOperador = true) {
+            json.decodeFromString(RespostaDeMesas.serializer(), it)
+        }.also { if (it.unidade.isNotBlank()) configuracao.guardarUnidade(it.unidade) }
+
+    /** A conta de uma mesa: itens, o que já foi pago e o que falta. */
+    suspend fun buscarConta(comandaId: String): ContaDaMesa =
+        chamar("/api/maquininha/comandas/$comandaId", comOperador = true) {
+            json.decodeFromString(ContaDaMesa.serializer(), it)
         }
 
     /**
-     * Conta ao servidor o que aconteceu com a cobrança.
+     * Conta ao servidor o pagamento que a credenciadora já aprovou.
      *
      * É a chamada que não pode se perder: uma transação aprovada que o
-     * servidor não soube vira cobrança dobrada no cliente. Quem chama tem que
-     * insistir até conseguir — veja `EnvioTeimoso`.
+     * servidor não soube deixa a conta aberta no salão, e alguém cobra de
+     * novo. Quem chama insiste até conseguir — veja `EnvioTeimoso`. Reenviar
+     * é seguro: a referência faz o servidor reconhecer o mesmo pagamento.
      */
-    suspend fun enviarResultado(resultado: ResultadoDaCobrancaEnviado) {
-        val corpo = json.encodeToString(
-            ResultadoDaCobrancaEnviado.serializer(),
-            resultado,
-        )
-        chamar("/api/maquininha/cobrancas", corpo) { }
+    suspend fun enviarPagamento(pagamento: PagamentoParaEnviar): RespostaDoPagamento {
+        val corpo = json.encodeToString(PagamentoParaEnviar.serializer(), pagamento)
+        return chamar("/api/maquininha/pagamentos", corpo, comOperador = true) {
+            json.decodeFromString(RespostaDoPagamento.serializer(), it)
+        }
     }
 }

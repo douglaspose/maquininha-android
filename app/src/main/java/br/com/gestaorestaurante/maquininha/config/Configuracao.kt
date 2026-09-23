@@ -22,14 +22,23 @@ private val Context.armazem by preferencesDataStore(name = "configuracao")
 private val CHAVE_SERVIDOR = stringPreferencesKey("servidor")
 private val CHAVE_TOKEN = stringPreferencesKey("token")
 private val CHAVE_UNIDADE = stringPreferencesKey("unidade")
+private val CHAVE_OPERADOR = stringPreferencesKey("operador")
+private val CHAVE_NOME_DO_OPERADOR = stringPreferencesKey("operadorNome")
 
 data class Configuracao(
     val servidor: String = "",
     val token: String = "",
     /** Nome da unidade, como o servidor respondeu da última vez. Só para a tela. */
     val unidade: String = "",
+    /**
+     * O turno de quem digitou o PIN. Vale doze horas e mora aqui para o
+     * operador não redigitar a cada venda; o PIN em si nunca é guardado.
+     */
+    val operador: String = "",
+    val operadorNome: String = "",
 ) {
     val completa: Boolean get() = servidor.isNotBlank() && token.isNotBlank()
+    val comOperador: Boolean get() = operador.isNotBlank()
 }
 
 class RepositorioDeConfiguracao(private val contexto: Context) {
@@ -39,6 +48,8 @@ class RepositorioDeConfiguracao(private val contexto: Context) {
             servidor = p[CHAVE_SERVIDOR].orEmpty(),
             token = p[CHAVE_TOKEN].orEmpty(),
             unidade = p[CHAVE_UNIDADE].orEmpty(),
+            operador = p[CHAVE_OPERADOR].orEmpty(),
+            operadorNome = p[CHAVE_NOME_DO_OPERADOR].orEmpty(),
         )
     }
 
@@ -50,6 +61,21 @@ class RepositorioDeConfiguracao(private val contexto: Context) {
             // alguns proxies tratam como rota diferente.
             p[CHAVE_SERVIDOR] = servidor.trim().trimEnd('/')
             p[CHAVE_TOKEN] = token.trim()
+        }
+    }
+
+    suspend fun guardarOperador(token: String, nome: String) {
+        contexto.armazem.edit { p ->
+            p[CHAVE_OPERADOR] = token
+            p[CHAVE_NOME_DO_OPERADOR] = nome
+        }
+    }
+
+    /** Fim de turno, ou token recusado pelo servidor: volta a pedir o PIN. */
+    suspend fun esquecerOperador() {
+        contexto.armazem.edit { p ->
+            p.remove(CHAVE_OPERADOR)
+            p.remove(CHAVE_NOME_DO_OPERADOR)
         }
     }
 

@@ -5,7 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import br.com.gestaorestaurante.maquininha.api.Api
-import br.com.gestaorestaurante.maquininha.api.ResultadoDaCobrancaEnviado
+import br.com.gestaorestaurante.maquininha.api.PagamentoParaEnviar
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.builtins.ListSerializer
@@ -30,16 +30,16 @@ private val CHAVE_FILA = stringPreferencesKey("fila")
 class EnvioTeimoso(private val contexto: Context, private val api: Api) {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    private val serializador = ListSerializer(ResultadoDaCobrancaEnviado.serializer())
+    private val serializador = ListSerializer(PagamentoParaEnviar.serializer())
 
     /**
      * Tenta mandar agora, com três tentativas rápidas. O que não for não se
      * perde: fica na fila em disco. Volta `true` se o servidor recebeu.
      */
-    suspend fun enviar(resultado: ResultadoDaCobrancaEnviado): Boolean {
+    suspend fun enviar(pagamento: PagamentoParaEnviar): Boolean {
         repeat(3) { tentativa ->
             try {
-                api.enviarResultado(resultado)
+                api.enviarPagamento(pagamento)
                 return true
             } catch (e: Exception) {
                 // 1s, 2s, 4s: o suficiente para atravessar uma oscilação de
@@ -47,7 +47,7 @@ class EnvioTeimoso(private val contexto: Context, private val api: Api) {
                 delay(1000L shl tentativa)
             }
         }
-        guardar(resultado)
+        guardar(pagamento)
         return false
     }
 
@@ -55,9 +55,9 @@ class EnvioTeimoso(private val contexto: Context, private val api: Api) {
     suspend fun escoar() {
         val fila = ler()
         if (fila.isEmpty()) return
-        val sobraram = fila.filter { resultado ->
+        val sobraram = fila.filter { pagamento ->
             try {
-                api.enviarResultado(resultado)
+                api.enviarPagamento(pagamento)
                 false
             } catch (e: Exception) {
                 true
@@ -68,11 +68,11 @@ class EnvioTeimoso(private val contexto: Context, private val api: Api) {
 
     suspend fun quantasPendentes(): Int = ler().size
 
-    private suspend fun guardar(resultado: ResultadoDaCobrancaEnviado) {
-        gravar(ler() + resultado)
+    private suspend fun guardar(pagamento: PagamentoParaEnviar) {
+        gravar(ler() + pagamento)
     }
 
-    private suspend fun ler(): List<ResultadoDaCobrancaEnviado> {
+    private suspend fun ler(): List<PagamentoParaEnviar> {
         val texto = contexto.pendencias.data.first()[CHAVE_FILA] ?: return emptyList()
         return try {
             json.decodeFromString(serializador, texto)
@@ -82,7 +82,7 @@ class EnvioTeimoso(private val contexto: Context, private val api: Api) {
         }
     }
 
-    private suspend fun gravar(fila: List<ResultadoDaCobrancaEnviado>) {
+    private suspend fun gravar(fila: List<PagamentoParaEnviar>) {
         contexto.pendencias.edit { it[CHAVE_FILA] = json.encodeToString(serializador, fila) }
     }
 }

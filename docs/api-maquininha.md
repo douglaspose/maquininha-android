@@ -75,6 +75,7 @@ cliente.
 {
   "id": "cmu…",
   "resultado": "APROVADA",
+  "valorEmCentavos": 12840,
   "credenciadora": "Stone",
   "identificadorNaCredenciadora": "…",
   "bandeira": "VISA",
@@ -85,7 +86,7 @@ cliente.
 ```
 
 ```json
-{ "id": "cmu…", "resultado": "RECUSADA", "motivo": "Saldo insuficiente" }
+{ "id": "cmu…", "resultado": "RECUSADA", "valorEmCentavos": 12840, "motivo": "Saldo insuficiente" }
 ```
 
 `resultado` é `APROVADA`, `RECUSADA`, `CANCELADA` ou `ERRO`. Recusada e erro

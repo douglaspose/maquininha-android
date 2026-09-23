@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- A exceção de texto claro da bancada; veja res/xml/rede.xml. -->
+    <application android:networkSecurityConfig="@xml/rede" />
+</manifest>

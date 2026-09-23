@@ -5,7 +5,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import br.com.gestaorestaurante.maquininha.PlataformaAtual
 import br.com.gestaorestaurante.maquininha.api.Api
-import br.com.gestaorestaurante.maquininha.api.ResultadoDaCobrancaEnviado
+import br.com.gestaorestaurante.maquininha.api.ContaDaMesa
+import br.com.gestaorestaurante.maquininha.api.MesaAberta
+import br.com.gestaorestaurante.maquininha.api.PagamentoParaEnviar
 import br.com.gestaorestaurante.maquininha.config.Configuracao
 import br.com.gestaorestaurante.maquininha.config.RepositorioDeConfiguracao
 import br.com.gestaorestaurante.maquininha.impressao.ServicoDaFila
@@ -26,10 +28,34 @@ import java.util.UUID
 
 /** Em que ponto da venda a tela está. */
 sealed interface EstadoDaTela {
+    /**
+     * O estado de quem acabou de abrir e ainda não leu a configuração do
+     * disco. Dura menos de um segundo, mas sem ele a maquininha pisca a tela
+     * de cobrança antes de cair nos ajustes — e quem está configurando o
+     * aparelho vê uma tela que não pode usar.
+     */
+    data object Abrindo : EstadoDaTela
     data object Configurando : EstadoDaTela
+
+    /** Começo de turno: a maquininha não abre o salão sem saber quem recebe. */
+    data object PedindoPin : EstadoDaTela
+
+    /** As mesas abertas, que é por onde o caixa começa. */
+    data object Mesas : EstadoDaTela
+
+    /** A conta de uma mesa: itens, o que falta, e por onde se decide o valor. */
+    data object Conta : EstadoDaTela
+
+    /** O teclado do valor. Vem de uma conta, ou da cobrança avulsa. */
     data object Parada : EstadoDaTela
     data class Cobrando(val mensagem: String) : EstadoDaTela
-    data class Terminada(val resultado: ResultadoDaCobranca, val enviado: Boolean) : EstadoDaTela
+    data class Terminada(
+        val resultado: ResultadoDaCobranca,
+        val enviado: Boolean,
+        /** O que o servidor respondeu quando o pagamento era de uma conta. */
+        val quitou: Boolean = false,
+        val faltaEmCentavos: Long = 0,
+    ) : EstadoDaTela
 }
 
 data class Painel(
@@ -37,11 +63,20 @@ data class Painel(
     val credenciadora: String = "",
     val provedorPronto: Boolean = false,
     val motivoDoProvedor: String = "",
-    val estado: EstadoDaTela = EstadoDaTela.Parada,
+    val estado: EstadoDaTela = EstadoDaTela.Abrindo,
     val valorEmCentavos: Long = 0,
     val forma: FormaDePagamento = FormaDePagamento.CREDITO,
     val parcelas: Int = 1,
     val pendentesDeEnvio: Int = 0,
+    /** O salão, como o servidor respondeu da última vez. */
+    val mesas: List<MesaAberta> = emptyList(),
+    val caixaAberto: Boolean = true,
+    val buscando: Boolean = false,
+    val conta: ContaDaMesa? = null,
+    /** A conta que este valor vai pagar. Nulo na cobrança avulsa. */
+    val comandaId: String? = null,
+    /** Recado curto para a tela: o que o servidor recusou, ou a rede que caiu. */
+    val aviso: String? = null,
 )
 
 class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
@@ -59,18 +94,14 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
     init {
         viewModelScope.launch {
             val config = configuracao.atual()
-            _painel.update {
-                it.copy(
-                    configuracao = config,
-                    estado = if (config.completa) EstadoDaTela.Parada else EstadoDaTela.Configurando,
-                )
-            }
+            _painel.update { it.copy(configuracao = config, estado = primeiraTela(config)) }
             if (config.completa) {
                 ServicoDaFila.ligar(contexto)
-                // Resultado que ficou preso numa queda de rede sai agora, antes
+                // Pagamento que ficou preso numa queda de rede sai agora, antes
                 // de qualquer venda nova.
                 envio.escoar()
                 _painel.update { it.copy(pendentesDeEnvio = envio.quantasPendentes()) }
+                if (config.comOperador) buscarMesas()
             }
             prepararProvedor()
         }
@@ -79,6 +110,16 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                 _painel.update { it.copy(configuracao = config) }
             }
         }
+    }
+
+    /**
+     * Por onde o aplicativo abre: ajustes sem token, PIN sem turno, e o salão
+     * quando já sabe as duas coisas.
+     */
+    private fun primeiraTela(config: Configuracao) = when {
+        !config.completa -> EstadoDaTela.Configurando
+        !config.comOperador -> EstadoDaTela.PedindoPin
+        else -> EstadoDaTela.Mesas
     }
 
     private suspend fun prepararProvedor() {
@@ -98,6 +139,115 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         }
     }
 
+    /** Começo de turno: o PIN vira o token que vale as próximas doze horas. */
+    fun entrarComPin(pin: String) {
+        viewModelScope.launch {
+            _painel.update { it.copy(buscando = true, aviso = null) }
+            try {
+                api.entrarComPin(pin)
+                _painel.update { it.copy(estado = EstadoDaTela.Mesas, buscando = false) }
+                buscarMesas()
+            } catch (e: Exception) {
+                _painel.update {
+                    it.copy(buscando = false, aviso = e.message ?: "Não foi possível entrar.")
+                }
+            }
+        }
+    }
+
+    /** Fim de turno: o próximo operador digita o PIN dele. */
+    fun sairDoTurno() {
+        viewModelScope.launch {
+            configuracao.esquecerOperador()
+            _painel.update {
+                it.copy(estado = EstadoDaTela.PedindoPin, mesas = emptyList(), conta = null)
+            }
+        }
+    }
+
+    fun atualizarMesas() {
+        viewModelScope.launch { buscarMesas() }
+    }
+
+    private suspend fun buscarMesas() {
+        _painel.update { it.copy(buscando = true) }
+        try {
+            val resposta = api.buscarMesas()
+            _painel.update {
+                it.copy(
+                    mesas = resposta.mesas,
+                    caixaAberto = resposta.caixaAberto,
+                    buscando = false,
+                    aviso = null,
+                )
+            }
+        } catch (e: Api.PrecisaDoPin) {
+            // O turno venceu no meio do salão: pede o PIN sem perder mais nada.
+            configuracao.esquecerOperador()
+            _painel.update {
+                it.copy(estado = EstadoDaTela.PedindoPin, buscando = false, aviso = e.message)
+            }
+        } catch (e: Exception) {
+            _painel.update { it.copy(buscando = false, aviso = e.message ?: "Sem resposta do servidor.") }
+        }
+    }
+
+    /** Abre a conta de uma mesa: itens, o que já foi pago e o que falta. */
+    fun abrirConta(comandaId: String) {
+        viewModelScope.launch {
+            _painel.update { it.copy(estado = EstadoDaTela.Conta, buscando = true, conta = null, aviso = null) }
+            try {
+                val conta = api.buscarConta(comandaId)
+                _painel.update { it.copy(conta = conta, comandaId = comandaId, buscando = false) }
+            } catch (e: Exception) {
+                _painel.update {
+                    it.copy(estado = EstadoDaTela.Mesas, buscando = false, aviso = e.message)
+                }
+            }
+        }
+    }
+
+    /**
+     * Do que falta na conta para o teclado.
+     *
+     * `tudo` leva o valor travado; parcial abre o teclado zerado, para o
+     * cliente que paga a parte dele e vai embora.
+     */
+    fun cobrarDaConta(tudo: Boolean) {
+        val conta = _painel.value.conta ?: return
+        _painel.update {
+            it.copy(
+                estado = EstadoDaTela.Parada,
+                comandaId = conta.comandaId,
+                valorEmCentavos = if (tudo) conta.faltaEmCentavos else 0,
+                aviso = null,
+            )
+        }
+    }
+
+    /** Cobrança avulsa: valor digitado, sem conta nenhuma no salão. */
+    fun cobrancaAvulsa() {
+        _painel.update {
+            it.copy(estado = EstadoDaTela.Parada, comandaId = null, valorEmCentavos = 0, aviso = null)
+        }
+    }
+
+    /** Volta uma tela, sem perder o turno. */
+    fun voltar() {
+        _painel.update {
+            when (it.estado) {
+                is EstadoDaTela.Conta -> it.copy(estado = EstadoDaTela.Mesas, conta = null)
+                is EstadoDaTela.Parada ->
+                    if (it.comandaId != null) {
+                        it.copy(estado = EstadoDaTela.Conta, valorEmCentavos = 0)
+                    } else {
+                        it.copy(estado = EstadoDaTela.Mesas, valorEmCentavos = 0)
+                    }
+                else -> it.copy(estado = EstadoDaTela.Mesas)
+            }
+        }
+    }
+
     fun digitar(digito: Char) {
         if (_painel.value.estado is EstadoDaTela.Cobrando) return
         _painel.update {
@@ -112,12 +262,29 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         _painel.update { it.copy(valorEmCentavos = it.valorEmCentavos / 10) }
     }
 
+    /**
+     * Depois de uma venda: volta para o salão quando havia conta, e para o
+     * teclado quando era cobrança avulsa. No meio da digitação, zera o valor.
+     */
     fun limpar() {
+        val painel = _painel.value
+        if (painel.estado is EstadoDaTela.Terminada && painel.comandaId != null) {
+            _painel.update { it.copy(valorEmCentavos = 0, conta = null, estado = EstadoDaTela.Mesas) }
+            viewModelScope.launch { buscarMesas() }
+            return
+        }
         _painel.update { it.copy(valorEmCentavos = 0, estado = EstadoDaTela.Parada) }
     }
 
     fun escolherForma(forma: FormaDePagamento) {
-        _painel.update { it.copy(forma = forma, parcelas = if (forma.parcela) it.parcelas else 1) }
+        _painel.update {
+            it.copy(
+                forma = forma,
+                // Parcelado começa em 2x: "parcelado em 1x" não existe, e
+                // deixar em 1 fazia a tela pedir parcelas sem nenhuma marcada.
+                parcelas = if (forma.parcela) maxOf(it.parcelas, 2) else 1,
+            )
+        }
     }
 
     fun escolherParcelas(parcelas: Int) {
@@ -128,12 +295,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         viewModelScope.launch {
             configuracao.guardar(servidor, token)
             val config = configuracao.atual()
-            _painel.update {
-                it.copy(
-                    configuracao = config,
-                    estado = if (config.completa) EstadoDaTela.Parada else EstadoDaTela.Configurando,
-                )
-            }
+            _painel.update { it.copy(configuracao = config, estado = primeiraTela(config)) }
             if (config.completa) ServicoDaFila.ligar(contexto)
         }
     }
@@ -150,10 +312,10 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
             _painel.update { it.copy(estado = EstadoDaTela.Cobrando("Iniciando")) }
 
             /*
-             * A referencia nasce aqui e vai junto para a credenciadora. Quando
-             * a rota de cobrancas do servidor existir, ela sera o id da
-             * cobranca de la; enquanto o valor e digitado na maquininha, um
-             * UUID ja serve para achar a transacao na conciliacao.
+             * A referência nasce aqui e vai junto para a credenciadora e para
+             * o servidor. É ela que faz um reenvio — a rede caiu depois de a
+             * cobrança ser aprovada — ser reconhecido como o mesmo pagamento,
+             * em vez de virar um segundo.
              */
             val cobranca = Cobranca(
                 referencia = UUID.randomUUID().toString(),
@@ -166,42 +328,57 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                 _painel.update { it.copy(estado = EstadoDaTela.Cobrando(andamento.mensagem)) }
             }
 
-            val enviado = contar(resultado, cobranca)
+            val contado = contar(resultado, cobranca, painel.comandaId)
             if (resultado is ResultadoDaCobranca.Aprovada) imprimirComprovante(resultado.transacao)
 
             _painel.update {
                 it.copy(
-                    estado = EstadoDaTela.Terminada(resultado, enviado),
+                    estado = EstadoDaTela.Terminada(
+                        resultado = resultado,
+                        enviado = contado.enviado,
+                        quitou = contado.quitou,
+                        faltaEmCentavos = contado.falta,
+                    ),
                     pendentesDeEnvio = envio.quantasPendentes(),
                 )
             }
         }
     }
 
-    /** Conta ao servidor o que aconteceu, e insiste se precisar. */
-    private suspend fun contar(resultado: ResultadoDaCobranca, cobranca: Cobranca): Boolean {
+    private data class Contado(val enviado: Boolean, val quitou: Boolean = false, val falta: Long = 0)
+
+    /**
+     * Conta ao servidor o pagamento aprovado, e insiste se precisar.
+     *
+     * Só o que foi aprovado **numa conta** vai: recusa não é pagamento, e
+     * cobrança avulsa não tem conta onde entrar — essa fica só na
+     * credenciadora, para a conciliação.
+     */
+    private suspend fun contar(
+        resultado: ResultadoDaCobranca,
+        cobranca: Cobranca,
+        comandaId: String?,
+    ): Contado {
         val aprovada = (resultado as? ResultadoDaCobranca.Aprovada)?.transacao
-        val enviado = ResultadoDaCobrancaEnviado(
-            id = cobranca.referencia,
-            resultado = when (resultado) {
-                is ResultadoDaCobranca.Aprovada -> "APROVADA"
-                is ResultadoDaCobranca.Recusada -> "RECUSADA"
-                is ResultadoDaCobranca.Cancelada -> "CANCELADA"
-                is ResultadoDaCobranca.Erro -> "ERRO"
-            },
-            credenciadora = PlataformaAtual.credenciadora,
-            identificadorNaCredenciadora = aprovada?.identificadorNaCredenciadora,
-            bandeira = aprovada?.bandeira,
-            autorizacao = aprovada?.autorizacao,
-            finalDoCartao = aprovada?.finalDoCartao,
-            parcelas = cobranca.parcelas,
-            motivo = when (resultado) {
-                is ResultadoDaCobranca.Recusada -> resultado.motivo
-                is ResultadoDaCobranca.Erro -> resultado.motivo
-                else -> null
-            },
+        if (aprovada == null || comandaId == null) return Contado(enviado = true)
+
+        val pagamento = PagamentoParaEnviar(
+            comandaId = comandaId,
+            referencia = cobranca.referencia,
+            forma = cobranca.forma.name,
+            valorEmCentavos = aprovada.valorEmCentavos,
+            nsu = aprovada.identificadorNaCredenciadora,
+            bandeira = aprovada.bandeira,
         )
-        return envio.enviar(enviado)
+
+        return try {
+            val resposta = api.enviarPagamento(pagamento)
+            Contado(enviado = true, quitou = resposta.quitada, falta = resposta.faltaEmCentavos)
+        } catch (e: Exception) {
+            // Não deu agora: fica na fila em disco e sai quando a rede voltar.
+            // A tela avisa, porque a conta continua aberta no salão até lá.
+            Contado(enviado = envio.enviar(pagamento))
+        }
     }
 
     /** A via do cliente sai na hora; a da loja, so quando o caixa pedir. */

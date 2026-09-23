@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
@@ -70,6 +71,14 @@ class ServicoDaFila : LifecycleService() {
                 // por vez e pode haver mais esperando.
                 if (resposta.trabalhos.size >= 20) 200L else INTERVALO
             } catch (e: Exception) {
+                /*
+                 * A notificação cabe uma linha; o logcat cabe a causa. Sem
+                 * este log, "Sem resposta do servidor" é tudo o que sobra
+                 * para diagnosticar uma maquininha que não imprime — e a
+                 * diferença entre DNS, certificado e porta fechada é o que
+                 * resolve o chamado.
+                 */
+                Log.w("Maquininha", "fila de impressão: ${e.message}", e)
                 atualizarNotificacao(e.message ?: "Sem servidor")
                 // Servidor fora do ar não merece uma chamada a cada 3s de cada
                 // maquininha do salão.

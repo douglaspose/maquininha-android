@@ -33,6 +33,16 @@ private fun Cupom.Linha.paraLargura(colunas: Int): List<Cupom.Linha> {
     val texto = this.texto.trimEnd()
     if (texto.length <= cabem) return listOf(copy(texto = texto))
 
+    /*
+     * Régua não se quebra: uma linha de 48 hífens partida ao meio vira duas
+     * réguas tortas, uma cheia e uma pela metade. Quem separa seções com um
+     * caractere repetido quer uma linha da largura do papel, seja ela qual
+     * for — então corta no tamanho e pronto.
+     */
+    if (texto.length > 1 && texto.all { it == texto[0] } && !texto[0].isLetterOrDigit()) {
+        return listOf(copy(texto = texto.take(cabem)))
+    }
+
     val separacao = ESPACOS_DO_MEIO.findAll(texto).lastOrNull()
     if (separacao != null) {
         val esquerda = texto.substring(0, separacao.range.first).trimEnd()

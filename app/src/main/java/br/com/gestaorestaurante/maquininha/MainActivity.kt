@@ -5,9 +5,11 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
@@ -35,12 +37,20 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        /*
+         * Do Android 15 em diante a janela é sempre de borda a borda, quer o
+         * aplicativo peça ou não: sem isto o título encosta no relógio e o
+         * botão de cobrar fica atrás da barra de navegação. `enableEdgeToEdge`
+         * declara a intenção e `safeDrawingPadding` devolve o espaço das duas
+         * barras ao conteúdo.
+         */
+        enableEdgeToEdge()
         garantirNotificacao()
 
         setContent {
             TemaDaMaquininha {
                 Surface(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().safeDrawingPadding(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
                     val modelo: ModeloDaTela = viewModel()
@@ -56,6 +66,13 @@ class MainActivity : ComponentActivity() {
                             cobrar = modelo::cobrar,
                             configurar = modelo::configurar,
                             abrirConfiguracao = modelo::abrirConfiguracao,
+                            entrarComPin = modelo::entrarComPin,
+                            sairDoTurno = modelo::sairDoTurno,
+                            atualizarMesas = modelo::atualizarMesas,
+                            abrirConta = modelo::abrirConta,
+                            cobrarDaConta = modelo::cobrarDaConta,
+                            cobrancaAvulsa = modelo::cobrancaAvulsa,
+                            voltar = modelo::voltar,
                         ),
                     )
                 }
