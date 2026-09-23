@@ -42,8 +42,22 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
     /** Falha da conversa com o servidor, já com um texto que cabe numa tela. */
     class FalhaNaApi(mensagem: String, causa: Throwable? = null) : IOException(mensagem, causa)
 
-    /** A sessão do operador do turno morreu: quem chamou manda pedir o PIN. */
-    class PrecisaDoPin(mensagem: String) : IOException(mensagem)
+    /**
+     * A chamada precisava de um turno aberto e não tinha.
+     *
+     * [recusadoPeloServidor] separa duas coisas que pareciam uma só:
+     *
+     *  - **true** — o servidor devolveu 401 numa chamada com operador. O turno
+     *    morreu de verdade (venceu, ou o aparelho mudou de unidade), e guardar
+     *    o token não serve mais para nada;
+     *  - **false** — a própria maquininha viu que não tinha turno e nem chegou
+     *    a sair pela rede. Aqui ninguém recusou nada, e apagar o turno por
+     *    causa disso é jogar fora um token que pode estar bom.
+     */
+    class PrecisaDoPin(
+        mensagem: String,
+        val recusadoPeloServidor: Boolean,
+    ) : IOException(mensagem)
 
     private suspend fun <T> chamar(
         caminho: String,
@@ -53,7 +67,9 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
     ): T = withContext(Dispatchers.IO) {
         val config = configuracao.atual()
         if (!config.completa) throw FalhaNaApi("Aparelho sem servidor ou token configurado.")
-        if (comOperador && !config.comOperador) throw PrecisaDoPin("Digite o PIN para começar.")
+        if (comOperador && !config.comOperador) {
+            throw PrecisaDoPin("Digite o PIN para começar.", recusadoPeloServidor = false)
+        }
 
         val requisicao = Request.Builder()
             .url(config.servidor + caminho)
@@ -76,7 +92,12 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
                     // 401 tem nome próprio: numa chamada de operador é o turno
                     // que venceu; nas outras, é o token do aparelho.
                     if (resposta.code == 401) {
-                        if (comOperador) throw PrecisaDoPin(doServidor.ifBlank { "Turno encerrado." })
+                        if (comOperador) {
+                            throw PrecisaDoPin(
+                                doServidor.ifBlank { "Turno encerrado." },
+                                recusadoPeloServidor = true,
+                            )
+                        }
                         throw FalhaNaApi(doServidor.ifBlank { "Token recusado pelo servidor." })
                     }
                     throw FalhaNaApi(doServidor.ifBlank { "Servidor respondeu ${resposta.code}." })

@@ -1,6 +1,7 @@
 package br.com.gestaorestaurante.maquininha.config
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -71,8 +72,15 @@ class RepositorioDeConfiguracao(private val contexto: Context) {
         }
     }
 
-    /** Fim de turno, ou token recusado pelo servidor: volta a pedir o PIN. */
-    suspend fun esquecerOperador() {
+    /**
+     * Fim de turno, ou token recusado pelo servidor: volta a pedir o PIN.
+     *
+     * O `motivo` vai para o logcat, e não é enfeite: um turno que cai sozinho
+     * no meio do salão é a queixa mais difícil de investigar deste aplicativo
+     * — sem rastro, resta adivinhar. Duas palavras aqui poupam uma tarde.
+     */
+    suspend fun esquecerOperador(motivo: String) {
+        Log.i(ETIQUETA, "turno encerrado: $motivo")
         contexto.armazem.edit { p ->
             p.remove(CHAVE_OPERADOR)
             p.remove(CHAVE_NOME_DO_OPERADOR)
@@ -81,5 +89,9 @@ class RepositorioDeConfiguracao(private val contexto: Context) {
 
     suspend fun guardarUnidade(nome: String) {
         contexto.armazem.edit { p -> p[CHAVE_UNIDADE] = nome }
+    }
+
+    private companion object {
+        const val ETIQUETA = "Maquininha"
     }
 }

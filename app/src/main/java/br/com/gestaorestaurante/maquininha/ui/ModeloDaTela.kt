@@ -168,7 +168,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
     /** Fim de turno: o próximo operador digita o PIN dele. */
     fun sairDoTurno() {
         viewModelScope.launch {
-            configuracao.esquecerOperador()
+            configuracao.esquecerOperador("o operador saiu pelo botão")
             _painel.update {
                 it.copy(estado = EstadoDaTela.PedindoPin, mesas = emptyList(), conta = null)
             }
@@ -179,7 +179,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         viewModelScope.launch { buscarMesas() }
     }
 
-    private suspend fun buscarMesas() {
+    private suspend fun buscarMesas(segundaTentativa: Boolean = false) {
         _painel.update { it.copy(buscando = true) }
         try {
             val resposta = api.buscarMesas()
@@ -192,8 +192,23 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                 )
             }
         } catch (e: Api.PrecisaDoPin) {
-            // O turno venceu no meio do salão: pede o PIN sem perder mais nada.
-            configuracao.esquecerOperador()
+            /*
+             * Duas coisas diferentes chegam aqui, e só uma custa o turno.
+             *
+             * Recusado pelo servidor é definitivo: o token não serve mais, e
+             * guardá-lo só atrapalha. Mas quando a própria maquininha viu que
+             * não tinha turno — sem falar com ninguém — e o turno está no
+             * disco, o que houve foi a configuração ser lida no instante
+             * errado. Aí a resposta certa é tentar de novo, não mandar o caixa
+             * redigitar o PIN no meio do salão.
+             */
+            if (!e.recusadoPeloServidor && !segundaTentativa && configuracao.atual().comOperador) {
+                buscarMesas(segundaTentativa = true)
+                return
+            }
+            if (e.recusadoPeloServidor) {
+                configuracao.esquecerOperador("o servidor recusou o turno (${e.message})")
+            }
             _painel.update {
                 it.copy(estado = EstadoDaTela.PedindoPin, buscando = false, aviso = e.message)
             }
