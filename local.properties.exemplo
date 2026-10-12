@@ -1,13 +1,42 @@
 # Copie para `local.properties` (que o git ignora) e preencha.
+#
+# Nada daqui entra no repositório. Num servidor de build, onde não existe
+# `local.properties`, as mesmas chaves valem como variáveis de ambiente, em
+# maiúsculas e com underscore: `stone.jks.senha` vira `STONE_JKS_SENHA`.
 
 # Onde está o SDK do Android. O Android Studio escreve esta linha sozinho na
 # primeira vez que abre o projeto.
-sdk.dir=C\:\Users\Asus\AppData\Local\Android\Sdk
+sdk.dir=C\:/Users/Asus/AppData/Local/Android/Sdk
 
-# Token do PackageCloud que a Stone manda por e-mail no onboarding.
-# Só é necessário para compilar o flavor `stone`.
+
+# --- Stone ---------------------------------------------------------------
+#
+# Três coisas diferentes, de três origens diferentes. Vale saber qual é qual
+# antes de sair cobrando o cliente por elas:
+#
+#  - o **token** e a **chave de assinatura** são seus, de integrador, e vêm do
+#    programa de parceiros da Stone (souparceiro@stone.com.br);
+#  - o **Stone Code** é do lojista, e só faz falta na hora de ativar o
+#    aplicativo no aparelho dele.
+
+# Token do PackageCloud, que a Stone manda por e-mail no onboarding. O
+# endereço do repositório privado da SDK embute este token: sem ele, a
+# dependência `br.com.stone:stone-sdk-posandroid` nem baixa.
 stone.packagecloud.token=
 
-# Stone Code (a "affiliation key") usado para ativar o aplicativo na primeira
-# execução. Só o flavor `stone` lê isto.
+# Stone Code (a "affiliation key") do estabelecimento. Vincula o aparelho à
+# conta do lojista na primeira ativação. Só o flavor `stone` lê isto.
 stone.code=
+
+# A chave de assinatura que a Stone entrega junto com a homologação. Não é uma
+# chave que se gere aqui: é com ela que o APK precisa ser assinado para
+# instalar na maquininha — inclusive na de debug.
+#
+# O caminho é relativo à raiz do projeto (ou absoluto). Guarde o arquivo fora
+# do repositório, ou numa pasta ignorada como `chaves/`.
+stone.jks.caminho=
+stone.jks.senha=
+stone.jks.alias=
+# Só preencha se a senha da chave for diferente da senha do cofre; em branco,
+# vale a de cima.
+stone.jks.senhaDaChave=

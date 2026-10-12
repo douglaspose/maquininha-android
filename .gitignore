@@ -9,6 +9,12 @@ build/
 # Caminho do SDK e credenciais da credenciadora: são desta máquina.
 local.properties
 
+# Chaves de assinatura. A da Stone vem com a homologação e vale por si só: com
+# ela, qualquer um assina um APK que a maquininha aceita. Nunca entra no git.
+*.jks
+*.keystore
+chaves/
+
 .idea/
 *.iml
 captures/
