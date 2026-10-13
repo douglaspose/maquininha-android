@@ -152,3 +152,55 @@ data class RespostaDoPagamento(
 /** O corpo de erro do servidor: uma frase pronta para a tela. */
 @Serializable
 data class ErroDoServidor(val erro: String = "")
+
+// --- Cardápio e lançamento de itens ---
+
+@Serializable
+data class RespostaDoCardapio(
+    val unidade: String = "",
+    val categorias: List<CategoriaDoCardapio> = emptyList(),
+)
+
+@Serializable
+data class CategoriaDoCardapio(
+    val id: String = "",
+    val nome: String = "",
+    val itens: List<ItemDoCardapio> = emptyList(),
+)
+
+@Serializable
+data class ItemDoCardapio(
+    val cardapioItemId: String = "",
+    val produtoId: String = "",
+    val titulo: String = "",
+    val descricao: String? = null,
+    val precoEmCentavos: Long = 0,
+    /**
+     * Esgotado aparece na lista, apagado e sem toque. Sumir com ele faria o
+     * garçom procurar na tela um prato que ele sabe que existe.
+     */
+    val esgotado: Boolean = false,
+    val exigePontoCarne: Boolean = false,
+)
+
+/** Uma linha do carrinho, do jeito que o servidor recebe. */
+@Serializable
+data class ItemParaLancar(
+    val cardapioItemId: String,
+    val quantidade: Int = 1,
+    val observacao: String? = null,
+)
+
+@Serializable
+data class RodadaParaLancar(
+    val itens: List<ItemParaLancar>,
+    /** Ligado: o garçom que lançou na mesa quer o prato andando. */
+    val enviar: Boolean = true,
+)
+
+@Serializable
+data class RespostaDaRodada(
+    val ok: Boolean = false,
+    val lancados: Int = 0,
+    val enviados: Int = 0,
+)

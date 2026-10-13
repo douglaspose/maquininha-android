@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import br.com.gestaorestaurante.maquininha.api.ItemDoCardapio
 import br.com.gestaorestaurante.maquininha.api.MesaAberta
 
 /**
@@ -378,6 +379,160 @@ internal fun TelaDaConta(painel: Painel, acoes: Acoes) {
             modifier = Modifier.fillMaxWidth().height(52.dp),
         ) {
             Text("Cobrar outro valor", fontSize = 16.sp)
+        }
+        /*
+         * Lançar fica junto de cobrar, e não numa tela à parte: é a mesma mesa,
+         * e o garçom que acabou de conferir a conta é quem ouve "traz mais uma".
+         */
+        OutlinedButton(
+            onClick = acoes.abrirCardapio,
+            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+        ) {
+            Text("Lançar itens", fontSize = 16.sp)
+        }
+    }
+}
+
+/**
+ * O cardápio, para o garçom montar a rodada na mesa.
+ *
+ * A rodada inteira antes de mandar: o garçom ouve a mesa toda, confere e
+ * envia. Item a item, cada toque seria uma ida à cozinha — e uma chance de a
+ * rede falhar no meio.
+ */
+@Composable
+internal fun TelaDoCardapio(painel: Painel, acoes: Acoes) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = acoes.voltar) { Text("← Conta") }
+            Spacer(Modifier.weight(1f))
+            Text(
+                painel.conta?.mesa ?: "Cardápio",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+
+        painel.aviso?.let {
+            Spacer(Modifier.height(8.dp))
+            Aviso(it, MaterialTheme.colorScheme.error)
+        }
+
+        if (painel.cardapio.isEmpty()) {
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Text(
+                    if (painel.buscando) "Buscando o cardápio..." else "Cardápio vazio.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
+            LazyColumn(
+                Modifier.weight(1f).padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                for (categoria in painel.cardapio) {
+                    item(key = "cat-${categoria.id}") {
+                        Text(
+                            categoria.nome.uppercase(),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+                        )
+                    }
+                    items(categoria.itens, key = { it.cardapioItemId }) { item ->
+                        ItemNoCardapio(
+                            item = item,
+                            quantidade = painel.carrinho
+                                .find { it.item.cardapioItemId == item.cardapioItemId }
+                                ?.quantidade ?: 0,
+                            aoPor = { acoes.porNoCarrinho(item) },
+                            aoTirar = { acoes.tirarDoCarrinho(item) },
+                        )
+                    }
+                }
+            }
+        }
+
+        Button(
+            onClick = acoes.lancarRodada,
+            enabled = painel.carrinho.isNotEmpty() && !painel.buscando,
+            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier.fillMaxWidth().height(60.dp),
+        ) {
+            // O que vai e quanto soma, no botão: é a última conferência antes
+            // de a rodada chegar à chapa.
+            Text(
+                when {
+                    painel.buscando -> "Lançando..."
+                    painel.carrinho.isEmpty() -> "Escolha os itens"
+                    else -> "Lançar ${painel.carrinho.sumOf { it.quantidade }} item(ns) · " +
+                        emReais(painel.totalDoCarrinhoEmCentavos)
+                },
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ItemNoCardapio(
+    item: ItemDoCardapio,
+    quantidade: Int,
+    aoPor: () -> Unit,
+    aoTirar: () -> Unit,
+) {
+    Surface(
+        color = if (quantidade > 0) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surface
+        },
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                Text(
+                    item.titulo,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    // Esgotado fica na lista, apagado: sumir faria o garçom
+                    // procurar um prato que ele sabe que existe.
+                    color = if (item.esgotado) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                )
+                Text(
+                    if (item.esgotado) "esgotado" else emReais(item.precoEmCentavos),
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            if (item.esgotado) return@Row
+
+            if (quantidade > 0) {
+                TextButton(onClick = aoTirar) { Text("−", fontSize = 22.sp) }
+                Text(
+                    "$quantidade",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+            }
+            TextButton(onClick = aoPor) { Text("+", fontSize = 22.sp) }
         }
     }
 }

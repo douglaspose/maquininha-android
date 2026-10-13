@@ -141,6 +141,26 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
             json.decodeFromString(RespostaDeMesas.serializer(), it)
         }.also { if (it.unidade.isNotBlank()) configuracao.guardarUnidade(it.unidade) }
 
+    /**
+     * O cardápio do salão, inteiro de uma vez.
+     *
+     * É o mesmo cardápio do PDV, com o preço de lá. Vem completo numa resposta
+     * só porque o garçom no salão não pode depender da rede a cada toque para
+     * ver a próxima seção.
+     */
+    suspend fun buscarCardapio(): RespostaDoCardapio =
+        chamar("/api/maquininha/cardapio", comOperador = true) {
+            json.decodeFromString(RespostaDoCardapio.serializer(), it)
+        }
+
+    /** Manda a rodada que o garçom montou na mesa. */
+    suspend fun lancarRodada(comandaId: String, rodada: RodadaParaLancar): RespostaDaRodada {
+        val corpo = json.encodeToString(RodadaParaLancar.serializer(), rodada)
+        return chamar("/api/maquininha/comandas/$comandaId/itens", corpo, comOperador = true) {
+            json.decodeFromString(RespostaDaRodada.serializer(), it)
+        }
+    }
+
     /** A conta de uma mesa: itens, o que já foi pago e o que falta. */
     suspend fun buscarConta(comandaId: String): ContaDaMesa =
         chamar("/api/maquininha/comandas/$comandaId", comOperador = true) {

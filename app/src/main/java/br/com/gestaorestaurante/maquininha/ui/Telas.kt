@@ -40,6 +40,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import br.com.gestaorestaurante.maquininha.api.ItemDoCardapio
 import br.com.gestaorestaurante.maquininha.pagamento.FormaDePagamento
 import br.com.gestaorestaurante.maquininha.pagamento.ResultadoDaCobranca
 
@@ -58,6 +59,7 @@ fun Tela(painel: Painel, acoes: Acoes) {
         is EstadoDaTela.PedindoPin -> TelaDePin(painel, acoes)
         is EstadoDaTela.Mesas -> TelaDeMesas(painel, acoes)
         is EstadoDaTela.Conta -> TelaDaConta(painel, acoes)
+        is EstadoDaTela.Cardapio -> TelaDoCardapio(painel, acoes)
         is EstadoDaTela.Cobrando ->
             TelaDeAndamento(painel.estado.mensagem, "Siga as instruções no visor")
         is EstadoDaTela.Terminada -> TelaDeResultado(painel, painel.estado, acoes)
@@ -79,6 +81,10 @@ class Acoes(
     val sairDoTurno: () -> Unit,
     val atualizarMesas: () -> Unit,
     val abrirConta: (String) -> Unit,
+    val abrirCardapio: () -> Unit,
+    val porNoCarrinho: (ItemDoCardapio) -> Unit,
+    val tirarDoCarrinho: (ItemDoCardapio) -> Unit,
+    val lancarRodada: () -> Unit,
     val cobrarDaConta: (Boolean) -> Unit,
     val cobrancaAvulsa: () -> Unit,
     val voltar: () -> Unit,

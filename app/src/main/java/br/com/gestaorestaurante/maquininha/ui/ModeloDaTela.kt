@@ -5,9 +5,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import br.com.gestaorestaurante.maquininha.PlataformaAtual
 import br.com.gestaorestaurante.maquininha.api.Api
+import br.com.gestaorestaurante.maquininha.api.CategoriaDoCardapio
 import br.com.gestaorestaurante.maquininha.api.ContaDaMesa
+import br.com.gestaorestaurante.maquininha.api.ItemDoCardapio
+import br.com.gestaorestaurante.maquininha.api.ItemParaLancar
 import br.com.gestaorestaurante.maquininha.api.MesaAberta
 import br.com.gestaorestaurante.maquininha.api.PagamentoParaEnviar
+import br.com.gestaorestaurante.maquininha.api.RodadaParaLancar
 import br.com.gestaorestaurante.maquininha.config.Configuracao
 import br.com.gestaorestaurante.maquininha.config.RepositorioDeConfiguracao
 import br.com.gestaorestaurante.maquininha.impressao.ServicoDaFila
@@ -46,6 +50,9 @@ sealed interface EstadoDaTela {
     /** A conta de uma mesa: itens, o que falta, e por onde se decide o valor. */
     data object Conta : EstadoDaTela
 
+    /** O cardápio, para o garçom montar a rodada sem voltar ao balcão. */
+    data object Cardapio : EstadoDaTela
+
     /** O teclado do valor. Vem de uma conta, ou da cobrança avulsa. */
     data object Parada : EstadoDaTela
     data class Cobrando(val mensagem: String) : EstadoDaTela
@@ -83,7 +90,23 @@ data class Painel(
      * mensagem, e o campo precisa limpar nas duas.
      */
     val falhasNoPin: Int = 0,
-)
+    /** O cardápio da casa, como o servidor respondeu. */
+    val cardapio: List<CategoriaDoCardapio> = emptyList(),
+    /** A rodada que o garçom está montando, antes de mandar para a cozinha. */
+    val carrinho: List<LinhaDoCarrinho> = emptyList(),
+) {
+    val totalDoCarrinhoEmCentavos: Long
+        get() = carrinho.sumOf { it.item.precoEmCentavos * it.quantidade }
+}
+
+/**
+ * Uma linha da rodada em montagem.
+ *
+ * Mora só na memória da maquininha até o garçom mandar: enquanto ele escolhe,
+ * nada disso existe para o resto da casa. O carrinho do banco — o que o PDV
+ * mostra — só nasce quando a rodada é lançada.
+ */
+data class LinhaDoCarrinho(val item: ItemDoCardapio, val quantidade: Int)
 
 class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
 
@@ -227,6 +250,110 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
             } catch (e: Exception) {
                 _painel.update {
                     it.copy(estado = EstadoDaTela.Mesas, buscando = false, aviso = e.message)
+                }
+            }
+        }
+    }
+
+    /**
+     * Abre o cardápio para a conta que está na tela.
+     *
+     * O cardápio é buscado uma vez por turno e fica: ele muda quando a casa
+     * mexe nele, não entre uma mesa e outra, e numa noite cheia são dezenas de
+     * idas ao cardápio que não precisam de rede.
+     */
+    fun abrirCardapio() {
+        val comandaId = _painel.value.comandaId ?: return
+        viewModelScope.launch {
+            _painel.update {
+                it.copy(estado = EstadoDaTela.Cardapio, carrinho = emptyList(), aviso = null)
+            }
+            if (_painel.value.cardapio.isNotEmpty()) return@launch
+
+            _painel.update { it.copy(buscando = true) }
+            try {
+                val cardapio = api.buscarCardapio()
+                _painel.update { it.copy(cardapio = cardapio.categorias, buscando = false) }
+            } catch (e: Exception) {
+                _painel.update {
+                    it.copy(estado = EstadoDaTela.Conta, buscando = false, aviso = e.message)
+                }
+            }
+        }
+    }
+
+    /** Mais um deste item na rodada. */
+    fun porNoCarrinho(item: ItemDoCardapio) {
+        if (item.esgotado) return
+        _painel.update { painel ->
+            val existente = painel.carrinho.find { it.item.cardapioItemId == item.cardapioItemId }
+            val carrinho = if (existente == null) {
+                painel.carrinho + LinhaDoCarrinho(item, 1)
+            } else {
+                painel.carrinho.map {
+                    if (it.item.cardapioItemId == item.cardapioItemId) {
+                        it.copy(quantidade = it.quantidade + 1)
+                    } else {
+                        it
+                    }
+                }
+            }
+            painel.copy(carrinho = carrinho, aviso = null)
+        }
+    }
+
+    /** Menos um. Chegando a zero, a linha sai da rodada. */
+    fun tirarDoCarrinho(item: ItemDoCardapio) {
+        _painel.update { painel ->
+            val carrinho = painel.carrinho
+                .map {
+                    if (it.item.cardapioItemId == item.cardapioItemId) {
+                        it.copy(quantidade = it.quantidade - 1)
+                    } else {
+                        it
+                    }
+                }
+                .filter { it.quantidade > 0 }
+            painel.copy(carrinho = carrinho)
+        }
+    }
+
+    /**
+     * Manda a rodada para a cozinha e volta para a conta já atualizada.
+     *
+     * Volta buscando a conta de novo porque o que importa ao garçom logo
+     * depois de lançar é o total novo — e porque é a confirmação de que o que
+     * ele montou chegou mesmo.
+     */
+    fun lancarRodada() {
+        val painel = _painel.value
+        val comandaId = painel.comandaId ?: return
+        if (painel.carrinho.isEmpty() || painel.buscando) return
+
+        viewModelScope.launch {
+            _painel.update { it.copy(buscando = true, aviso = null) }
+            try {
+                api.lancarRodada(
+                    comandaId,
+                    RodadaParaLancar(
+                        itens = painel.carrinho.map {
+                            ItemParaLancar(
+                                cardapioItemId = it.item.cardapioItemId,
+                                quantidade = it.quantidade,
+                            )
+                        },
+                    ),
+                )
+                _painel.update { it.copy(carrinho = emptyList(), buscando = false) }
+                abrirConta(comandaId)
+            } catch (e: Exception) {
+                /*
+                 * O carrinho fica como está: a rodada pode ter entrado antes de
+                 * a resposta se perder, e limpar a tela faria o garçom montar
+                 * tudo de novo sem saber. Ele confere a conta e decide.
+                 */
+                _painel.update {
+                    it.copy(buscando = false, aviso = e.message ?: "Não foi possível lançar.")
                 }
             }
         }
