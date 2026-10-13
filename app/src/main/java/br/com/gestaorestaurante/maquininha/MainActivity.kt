@@ -74,6 +74,7 @@ class MainActivity : ComponentActivity() {
                             porNoCarrinho = modelo::porNoCarrinho,
                             tirarDoCarrinho = modelo::tirarDoCarrinho,
                             lancarRodada = modelo::lancarRodada,
+                            anotarObservacao = modelo::anotarObservacao,
                             cobrarDaConta = modelo::cobrarDaConta,
                             cobrancaAvulsa = modelo::cobrancaAvulsa,
                             voltar = modelo::voltar,

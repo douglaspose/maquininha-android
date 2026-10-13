@@ -85,6 +85,7 @@ class Acoes(
     val porNoCarrinho: (ItemDoCardapio) -> Unit,
     val tirarDoCarrinho: (ItemDoCardapio) -> Unit,
     val lancarRodada: () -> Unit,
+    val anotarObservacao: (ItemDoCardapio, String) -> Unit,
     val cobrarDaConta: (Boolean) -> Unit,
     val cobrancaAvulsa: () -> Unit,
     val voltar: () -> Unit,

@@ -2,6 +2,7 @@ package br.com.gestaorestaurante.maquininha.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,14 +10,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -403,6 +407,24 @@ internal fun TelaDaConta(painel: Painel, acoes: Acoes) {
  */
 @Composable
 internal fun TelaDoCardapio(painel: Painel, acoes: Acoes) {
+    // Qual item está com a observação aberta. Nulo: nenhum.
+    var anotando by remember { mutableStateOf<ItemDoCardapio?>(null) }
+
+    anotando?.let { item ->
+        DialogoDeObservacao(
+            item = item,
+            atual = painel.carrinho
+                .find { it.item.cardapioItemId == item.cardapioItemId }
+                ?.observacao
+                .orEmpty(),
+            aoSalvar = { texto ->
+                acoes.anotarObservacao(item, texto)
+                anotando = null
+            },
+            aoFechar = { anotando = null },
+        )
+    }
+
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = acoes.voltar) { Text("← Conta") }
@@ -443,13 +465,15 @@ internal fun TelaDoCardapio(painel: Painel, acoes: Acoes) {
                         )
                     }
                     items(categoria.itens, key = { it.cardapioItemId }) { item ->
+                        val linha = painel.carrinho
+                            .find { it.item.cardapioItemId == item.cardapioItemId }
                         ItemNoCardapio(
                             item = item,
-                            quantidade = painel.carrinho
-                                .find { it.item.cardapioItemId == item.cardapioItemId }
-                                ?.quantidade ?: 0,
+                            quantidade = linha?.quantidade ?: 0,
+                            observacao = linha?.observacao,
                             aoPor = { acoes.porNoCarrinho(item) },
                             aoTirar = { acoes.tirarDoCarrinho(item) },
+                            aoAnotar = { anotando = item },
                         )
                     }
                 }
@@ -478,12 +502,60 @@ internal fun TelaDoCardapio(painel: Painel, acoes: Acoes) {
     }
 }
 
+/**
+ * A observação do item, escrita na mesa.
+ *
+ * Num diálogo, e não numa tela à parte: o garçom está no meio da rodada, com a
+ * mesa falando, e não pode perder de vista o que já escolheu.
+ */
+@Composable
+private fun DialogoDeObservacao(
+    item: ItemDoCardapio,
+    atual: String,
+    aoSalvar: (String) -> Unit,
+    aoFechar: () -> Unit,
+) {
+    var texto by remember(item.cardapioItemId) { mutableStateOf(atual) }
+
+    AlertDialog(
+        onDismissRequest = aoFechar,
+        title = { Text(item.titulo, fontSize = 17.sp) },
+        text = {
+            Column {
+                Text(
+                    "Vai escrito no papel da cozinha.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = texto,
+                    // O corte é aqui também, e não só no servidor: o garçom
+                    // percebe o limite enquanto escreve, em vez de levar um
+                    // erro depois de montar a rodada inteira.
+                    onValueChange = { if (it.length <= 200) texto = it },
+                    placeholder = { Text("sem cebola, ponto para a mesa 4...") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { aoSalvar(texto) }) { Text("Salvar") } },
+        dismissButton = {
+            // Limpar é o caminho de quem anotou errado: sem ele, só apagando
+            // letra por letra no teclado da maquininha.
+            TextButton(onClick = { aoSalvar("") }) { Text("Limpar") }
+        },
+    )
+}
+
 @Composable
 private fun ItemNoCardapio(
     item: ItemDoCardapio,
     quantidade: Int,
+    observacao: String?,
     aoPor: () -> Unit,
     aoTirar: () -> Unit,
+    aoAnotar: () -> Unit,
 ) {
     Surface(
         color = if (quantidade > 0) {
@@ -519,6 +591,26 @@ private fun ItemNoCardapio(
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                /*
+                 * A observação fica à vista na própria linha. Escondida atrás
+                 * de um toque, o garçom não teria como conferir a rodada antes
+                 * de mandar — e é no papel da cozinha que ela aparece depois.
+                 */
+                if (quantidade > 0) {
+                    TextButton(
+                        onClick = aoAnotar,
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                        modifier = Modifier.heightIn(min = 28.dp),
+                    ) {
+                        Text(
+                            observacao?.let { "“$it”" } ?: "+ observação",
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Start,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
 
             if (item.esgotado) return@Row

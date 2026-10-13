@@ -106,7 +106,17 @@ data class Painel(
  * nada disso existe para o resto da casa. O carrinho do banco — o que o PDV
  * mostra — só nasce quando a rodada é lançada.
  */
-data class LinhaDoCarrinho(val item: ItemDoCardapio, val quantidade: Int)
+data class LinhaDoCarrinho(
+    val item: ItemDoCardapio,
+    val quantidade: Int,
+    /**
+     * Vale para a linha inteira, não por unidade: "sem cebola" é do prato, e
+     * o que muda de um para o outro na mesma mesa — o ponto da carne — tem
+     * campo próprio no sistema. Para duas observações diferentes do mesmo
+     * item, o garçom lança em rodadas separadas.
+     */
+    val observacao: String? = null,
+)
 
 class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
 
@@ -302,6 +312,28 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         }
     }
 
+    /**
+     * A observação da linha — o que vai escrito no papel da cozinha.
+     *
+     * Em branco, some: observação vazia gravada vira linha que não agrupa com
+     * nenhuma outra, e o garçom não entende por que dois chopes aparecem
+     * separados na conta.
+     */
+    fun anotarObservacao(item: ItemDoCardapio, texto: String) {
+        val limpo = texto.trim().take(200).ifBlank { null }
+        _painel.update { painel ->
+            painel.copy(
+                carrinho = painel.carrinho.map {
+                    if (it.item.cardapioItemId == item.cardapioItemId) {
+                        it.copy(observacao = limpo)
+                    } else {
+                        it
+                    }
+                }
+            )
+        }
+    }
+
     /** Menos um. Chegando a zero, a linha sai da rodada. */
     fun tirarDoCarrinho(item: ItemDoCardapio) {
         _painel.update { painel ->
@@ -340,6 +372,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                             ItemParaLancar(
                                 cardapioItemId = it.item.cardapioItemId,
                                 quantidade = it.quantidade,
+                                observacao = it.observacao,
                             )
                         },
                     ),
