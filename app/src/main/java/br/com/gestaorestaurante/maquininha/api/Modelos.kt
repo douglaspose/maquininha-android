@@ -223,6 +223,13 @@ data class EscolhaParaLancar(
 @Serializable
 data class ItemParaLancar(
     val cardapioItemId: String,
+    /**
+     * A linha do carrinho que originou este item.
+     *
+     * Vai igual em toda tentativa: é ela que faz o reenvio de uma rodada
+     * presa na rede não lançar o pedido duas vezes.
+     */
+    val referencia: String? = null,
     val quantidade: Int = 1,
     val observacao: String? = null,
     /** Só os identificadores: título e preço saem do cadastro, no servidor. */

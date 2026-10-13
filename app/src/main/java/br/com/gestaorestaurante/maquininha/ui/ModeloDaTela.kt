@@ -394,6 +394,14 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                         itens = painel.carrinho.map { linha ->
                             ItemParaLancar(
                                 cardapioItemId = linha.item.cardapioItemId,
+                                /*
+                                 * O id da linha é a referência, e não um valor
+                                 * novo a cada envio: ele nasce quando o garçom
+                                 * põe o item na rodada e sobrevive a quantas
+                                 * tentativas forem necessárias. É isso que faz
+                                 * o reenvio não lançar o pedido duas vezes.
+                                 */
+                                referencia = linha.id,
                                 quantidade = linha.quantidade,
                                 observacao = linha.observacao,
                                 opcionais = linha.escolhas.map {
