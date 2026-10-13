@@ -1,6 +1,9 @@
 package br.com.gestaorestaurante.maquininha.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
@@ -27,6 +30,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import br.com.gestaorestaurante.maquininha.api.ItemDoCardapio
 import br.com.gestaorestaurante.maquininha.api.MesaAberta
+import br.com.gestaorestaurante.maquininha.api.OpcionalDoCardapio
 
 /**
  * O salão dentro da maquininha: o PIN, as mesas abertas e a conta.
@@ -407,21 +412,31 @@ internal fun TelaDaConta(painel: Painel, acoes: Acoes) {
  */
 @Composable
 internal fun TelaDoCardapio(painel: Painel, acoes: Acoes) {
-    // Qual item está com a observação aberta. Nulo: nenhum.
-    var anotando by remember { mutableStateOf<ItemDoCardapio?>(null) }
+    // Qual linha está com a observação aberta, e qual item está escolhendo
+    // opcionais. Nulos: nenhum dos dois.
+    var anotando by remember { mutableStateOf<LinhaDoCarrinho?>(null) }
+    var escolhendo by remember { mutableStateOf<ItemDoCardapio?>(null) }
 
-    anotando?.let { item ->
+    anotando?.let { linha ->
         DialogoDeObservacao(
-            item = item,
-            atual = painel.carrinho
-                .find { it.item.cardapioItemId == item.cardapioItemId }
-                ?.observacao
-                .orEmpty(),
+            titulo = linha.item.titulo,
+            atual = linha.observacao.orEmpty(),
             aoSalvar = { texto ->
-                acoes.anotarObservacao(item, texto)
+                acoes.anotarObservacao(linha.id, texto)
                 anotando = null
             },
             aoFechar = { anotando = null },
+        )
+    }
+
+    escolhendo?.let { item ->
+        DialogoDeEscolhas(
+            item = item,
+            aoConfirmar = { escolhas ->
+                acoes.porNoCarrinho(item, escolhas)
+                escolhendo = null
+            },
+            aoFechar = { escolhendo = null },
         )
     }
 
@@ -465,15 +480,24 @@ internal fun TelaDoCardapio(painel: Painel, acoes: Acoes) {
                         )
                     }
                     items(categoria.itens, key = { it.cardapioItemId }) { item ->
-                        val linha = painel.carrinho
-                            .find { it.item.cardapioItemId == item.cardapioItemId }
                         ItemNoCardapio(
                             item = item,
-                            quantidade = linha?.quantidade ?: 0,
-                            observacao = linha?.observacao,
-                            aoPor = { acoes.porNoCarrinho(item) },
-                            aoTirar = { acoes.tirarDoCarrinho(item) },
-                            aoAnotar = { anotando = item },
+                            // Todas as linhas deste item: com escolhas, o mesmo
+                            // produto aparece mais de uma vez na rodada.
+                            linhas = painel.carrinho
+                                .filter { it.item.cardapioItemId == item.cardapioItemId },
+                            aoPor = {
+                                // Item com grupo pergunta antes; sem grupo, vai
+                                // direto — perguntar nada seria um toque a mais
+                                // em cada cerveja.
+                                if (item.grupos.isEmpty()) {
+                                    acoes.porNoCarrinho(item, emptyList())
+                                } else {
+                                    escolhendo = item
+                                }
+                            },
+                            aoTirar = { acoes.tirarDoCarrinho(it) },
+                            aoAnotar = { anotando = it },
                         )
                     }
                 }
@@ -510,16 +534,16 @@ internal fun TelaDoCardapio(painel: Painel, acoes: Acoes) {
  */
 @Composable
 private fun DialogoDeObservacao(
-    item: ItemDoCardapio,
+    titulo: String,
     atual: String,
     aoSalvar: (String) -> Unit,
     aoFechar: () -> Unit,
 ) {
-    var texto by remember(item.cardapioItemId) { mutableStateOf(atual) }
+    var texto by remember(titulo) { mutableStateOf(atual) }
 
     AlertDialog(
         onDismissRequest = aoFechar,
-        title = { Text(item.titulo, fontSize = 17.sp) },
+        title = { Text(titulo, fontSize = 17.sp) },
         text = {
             Column {
                 Text(
@@ -548,17 +572,149 @@ private fun DialogoDeObservacao(
     )
 }
 
+
+/**
+ * O diálogo das escolhas: ponto da carne, adicionais, acompanhamento.
+ *
+ * Abre no toque do "+" de quem tem grupo, e só deixa confirmar quando o
+ * obrigatório está atendido — é melhor travar o botão aqui, com o grupo à
+ * vista, do que deixar o servidor recusar a rodada inteira depois.
+ */
+@Composable
+private fun DialogoDeEscolhas(
+    item: ItemDoCardapio,
+    aoConfirmar: (List<OpcionalDoCardapio>) -> Unit,
+    aoFechar: () -> Unit,
+) {
+    // Por grupo, o que está marcado. `remember` pela chave do item: trocar de
+    // prato começa de novo.
+    val marcados = remember(item.cardapioItemId) {
+        mutableStateMapOf<String, MutableList<OpcionalDoCardapio>>()
+    }
+
+    fun doGrupo(grupoId: String) = marcados[grupoId] ?: mutableListOf()
+
+    val escolhas = item.grupos.flatMap { doGrupo(it.id) }
+    val faltando = item.grupos.filter { doGrupo(it.id).size < it.minimoDeVerdade }
+    val extra = escolhas.sumOf { it.precoEmCentavos }
+
+    AlertDialog(
+        onDismissRequest = aoFechar,
+        title = { Text(item.titulo, fontSize = 17.sp) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                for (grupo in item.grupos) {
+                    Text(
+                        buildString {
+                            append(grupo.titulo)
+                            // O que o grupo exige, em palavras: "escolha 1" é
+                            // mais claro que um asterisco de obrigatório.
+                            append(
+                                when {
+                                    grupo.minimoDeVerdade > 0 && grupo.escolhaUnica -> " · escolha 1"
+                                    grupo.minimoDeVerdade > 0 ->
+                                        " · escolha ${grupo.minimoDeVerdade} a ${grupo.maxEscolhas}"
+                                    grupo.maxEscolhas == 1 -> " · opcional"
+                                    else -> " · até ${grupo.maxEscolhas}, opcional"
+                                }
+                            )
+                        },
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+                    )
+
+                    for (opcional in grupo.itens) {
+                        val marcado = doGrupo(grupo.id).any { it.opcionalId == opcional.opcionalId }
+                        val cheio = doGrupo(grupo.id).size >= grupo.maxEscolhas
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 44.dp)
+                                .clickable {
+                                    val atuais = doGrupo(grupo.id).toMutableList()
+                                    when {
+                                        marcado -> atuais.removeAll {
+                                            it.opcionalId == opcional.opcionalId
+                                        }
+                                        // Grupo de uma escolha troca em vez de
+                                        // recusar: o garçom toca no ponto certo
+                                        // sem precisar desmarcar o errado.
+                                        grupo.escolhaUnica -> {
+                                            atuais.clear()
+                                            atuais.add(opcional)
+                                        }
+                                        !cheio -> atuais.add(opcional)
+                                    }
+                                    marcados[grupo.id] = atuais
+                                },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                if (marcado) "●" else "○",
+                                fontSize = 15.sp,
+                                color = if (marcado) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.outline
+                                },
+                                modifier = Modifier.padding(end = 10.dp),
+                            )
+                            Text(
+                                opcional.titulo,
+                                fontSize = 15.sp,
+                                modifier = Modifier.weight(1f),
+                                // Opção cheia fica apagada: o grupo já tem o
+                                // que aceita, e tocar nela não faria nada.
+                                color = if (!marcado && cheio && !grupo.escolhaUnica) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                            if (opcional.precoEmCentavos > 0) {
+                                Text(
+                                    "+ ${emReais(opcional.precoEmCentavos)}",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { aoConfirmar(escolhas) },
+                enabled = faltando.isEmpty(),
+            ) {
+                Text(
+                    if (faltando.isNotEmpty()) {
+                        "Falta ${faltando.first().titulo}"
+                    } else {
+                        "Pôr · ${emReais(item.precoEmCentavos + extra)}"
+                    }
+                )
+            }
+        },
+        dismissButton = { TextButton(onClick = aoFechar) { Text("Cancelar") } },
+    )
+}
+
 @Composable
 private fun ItemNoCardapio(
     item: ItemDoCardapio,
-    quantidade: Int,
-    observacao: String?,
+    linhas: List<LinhaDoCarrinho>,
     aoPor: () -> Unit,
-    aoTirar: () -> Unit,
-    aoAnotar: () -> Unit,
+    aoTirar: (String) -> Unit,
+    aoAnotar: (LinhaDoCarrinho) -> Unit,
 ) {
+    val total = linhas.sumOf { it.quantidade }
     Surface(
-        color = if (quantidade > 0) {
+        color = if (total > 0) {
             MaterialTheme.colorScheme.secondaryContainer
         } else {
             MaterialTheme.colorScheme.surface
@@ -567,64 +723,100 @@ private fun ItemNoCardapio(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f).padding(end = 8.dp)) {
-                Text(
-                    item.titulo,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    // Esgotado fica na lista, apagado: sumir faria o garçom
-                    // procurar um prato que ele sabe que existe.
-                    color = if (item.esgotado) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                )
-                Text(
-                    if (item.esgotado) "esgotado" else emReais(item.precoEmCentavos),
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                /*
-                 * A observação fica à vista na própria linha. Escondida atrás
-                 * de um toque, o garçom não teria como conferir a rodada antes
-                 * de mandar — e é no papel da cozinha que ela aparece depois.
-                 */
-                if (quantidade > 0) {
-                    TextButton(
-                        onClick = aoAnotar,
-                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
-                        modifier = Modifier.heightIn(min = 28.dp),
-                    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(
+                        item.titulo,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        // Esgotado fica na lista, apagado: sumir faria o garçom
+                        // procurar um prato que ele sabe que existe.
+                        color = if (item.esgotado) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                    Text(
+                        buildString {
+                            append(if (item.esgotado) "esgotado" else emReais(item.precoEmCentavos))
+                            // Avisa que vai perguntar, antes do toque: o garçom
+                            // sabe que este prato tem escolha a fazer.
+                            if (!item.esgotado && item.grupos.isNotEmpty()) {
+                                append(" · ")
+                                append(item.grupos.joinToString(", ") { it.titulo.lowercase() })
+                            }
+                        },
+                        fontSize = 13.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                if (!item.esgotado) {
+                    if (total > 0) {
                         Text(
-                            observacao?.let { "“$it”" } ?: "+ observação",
-                            fontSize = 12.sp,
-                            textAlign = TextAlign.Start,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
+                            "$total",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp),
                         )
                     }
+                    TextButton(onClick = aoPor) { Text("+", fontSize = 22.sp) }
                 }
             }
 
-            if (item.esgotado) return@Row
-
-            if (quantidade > 0) {
-                TextButton(onClick = aoTirar) { Text("−", fontSize = 22.sp) }
-                Text(
-                    "$quantidade",
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                )
+            /*
+             * Uma linha por combinação escolhida, com o que foi marcado à
+             * vista. Sem isto, duas picanhas com pontos diferentes apareceriam
+             * como "2x" e o garçom não teria como conferir a rodada antes de
+             * mandar — nem saber de qual delas o "−" vai tirar.
+             */
+            for (linha in linhas) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            buildString {
+                                append("${linha.quantidade}x")
+                                if (linha.escolhas.isNotEmpty()) {
+                                    append(" · ")
+                                    append(linha.escolhas.joinToString(", ") { it.titulo })
+                                }
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        TextButton(
+                            onClick = { aoAnotar(linha) },
+                            contentPadding = PaddingValues(0.dp),
+                            modifier = Modifier.heightIn(min = 26.dp),
+                        ) {
+                            Text(
+                                linha.observacao?.let { "“$it”" } ?: "+ observação",
+                                fontSize = 12.sp,
+                                textAlign = TextAlign.Start,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    Text(
+                        emReais(linha.precoDaLinhaEmCentavos),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = { aoTirar(linha.id) }) { Text("−", fontSize = 20.sp) }
+                }
             }
-            TextButton(onClick = aoPor) { Text("+", fontSize = 22.sp) }
         }
     }
 }

@@ -181,6 +181,42 @@ data class ItemDoCardapio(
      */
     val esgotado: Boolean = false,
     val exigePontoCarne: Boolean = false,
+    /** O que o cliente escolhe: ponto, adicionais, acompanhamento. */
+    val grupos: List<GrupoDeOpcionais> = emptyList(),
+)
+
+@Serializable
+data class GrupoDeOpcionais(
+    val id: String = "",
+    val titulo: String = "",
+    /**
+     * Quantas escolhas o grupo aceita. `min` 1 com `obrigatorio` é o "escolha
+     * o ponto da carne"; `max` 3 é o "até três adicionais".
+     */
+    val minEscolhas: Int = 0,
+    val maxEscolhas: Int = 1,
+    val obrigatorio: Boolean = false,
+    val itens: List<OpcionalDoCardapio> = emptyList(),
+) {
+    /** Um grupo de uma escolha só é rádio; de várias, caixa de marcar. */
+    val escolhaUnica: Boolean get() = maxEscolhas == 1
+
+    val minimoDeVerdade: Int get() = if (obrigatorio) maxOf(1, minEscolhas) else minEscolhas
+}
+
+@Serializable
+data class OpcionalDoCardapio(
+    val opcionalId: String = "",
+    val titulo: String = "",
+    /** Zero no que não cobra — "sem cebola" não tem preço. */
+    val precoEmCentavos: Long = 0,
+)
+
+/** Uma escolha feita, do jeito que o servidor recebe. */
+@Serializable
+data class EscolhaParaLancar(
+    val opcionalId: String,
+    val quantidade: Int = 1,
 )
 
 /** Uma linha do carrinho, do jeito que o servidor recebe. */
@@ -189,6 +225,8 @@ data class ItemParaLancar(
     val cardapioItemId: String,
     val quantidade: Int = 1,
     val observacao: String? = null,
+    /** Só os identificadores: título e preço saem do cadastro, no servidor. */
+    val opcionais: List<EscolhaParaLancar> = emptyList(),
 )
 
 @Serializable

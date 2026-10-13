@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import br.com.gestaorestaurante.maquininha.api.ItemDoCardapio
+import br.com.gestaorestaurante.maquininha.api.OpcionalDoCardapio
 import br.com.gestaorestaurante.maquininha.pagamento.FormaDePagamento
 import br.com.gestaorestaurante.maquininha.pagamento.ResultadoDaCobranca
 
@@ -82,10 +83,10 @@ class Acoes(
     val atualizarMesas: () -> Unit,
     val abrirConta: (String) -> Unit,
     val abrirCardapio: () -> Unit,
-    val porNoCarrinho: (ItemDoCardapio) -> Unit,
-    val tirarDoCarrinho: (ItemDoCardapio) -> Unit,
+    val porNoCarrinho: (ItemDoCardapio, List<OpcionalDoCardapio>) -> Unit,
+    val tirarDoCarrinho: (String) -> Unit,
     val lancarRodada: () -> Unit,
-    val anotarObservacao: (ItemDoCardapio, String) -> Unit,
+    val anotarObservacao: (String, String) -> Unit,
     val cobrarDaConta: (Boolean) -> Unit,
     val cobrancaAvulsa: () -> Unit,
     val voltar: () -> Unit,

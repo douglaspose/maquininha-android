@@ -8,7 +8,9 @@ import br.com.gestaorestaurante.maquininha.api.Api
 import br.com.gestaorestaurante.maquininha.api.CategoriaDoCardapio
 import br.com.gestaorestaurante.maquininha.api.ContaDaMesa
 import br.com.gestaorestaurante.maquininha.api.ItemDoCardapio
+import br.com.gestaorestaurante.maquininha.api.EscolhaParaLancar
 import br.com.gestaorestaurante.maquininha.api.ItemParaLancar
+import br.com.gestaorestaurante.maquininha.api.OpcionalDoCardapio
 import br.com.gestaorestaurante.maquininha.api.MesaAberta
 import br.com.gestaorestaurante.maquininha.api.PagamentoParaEnviar
 import br.com.gestaorestaurante.maquininha.api.RodadaParaLancar
@@ -96,7 +98,7 @@ data class Painel(
     val carrinho: List<LinhaDoCarrinho> = emptyList(),
 ) {
     val totalDoCarrinhoEmCentavos: Long
-        get() = carrinho.sumOf { it.item.precoEmCentavos * it.quantidade }
+        get() = carrinho.sumOf { it.precoDaLinhaEmCentavos }
 }
 
 /**
@@ -107,8 +109,20 @@ data class Painel(
  * mostra — só nasce quando a rodada é lançada.
  */
 data class LinhaDoCarrinho(
+    /**
+     * Identidade própria, e não a posição na lista: com escolhas, o mesmo
+     * produto aparece em várias linhas, e é por este id que a tela sabe de
+     * qual delas tirar uma unidade ou em qual escrever a observação.
+     */
+    val id: String = UUID.randomUUID().toString(),
     val item: ItemDoCardapio,
     val quantidade: Int,
+    /**
+     * As escolhas desta linha. Linhas do mesmo produto com escolhas diferentes
+     * são linhas diferentes — uma picanha com bacon não é a mesma coisa que
+     * uma sem, nem no preço nem no papel da cozinha.
+     */
+    val escolhas: List<OpcionalDoCardapio> = emptyList(),
     /**
      * Vale para a linha inteira, não por unidade: "sem cebola" é do prato, e
      * o que muda de um para o outro na mesma mesa — o ponto da carne — tem
@@ -116,7 +130,17 @@ data class LinhaDoCarrinho(
      * item, o garçom lança em rodadas separadas.
      */
     val observacao: String? = null,
-)
+) {
+    /**
+     * O que esta linha custa, com os adicionais somados ao item.
+     *
+     * A mesma conta que o servidor faz — e é de propósito que ela apareça
+     * antes de mandar: o garçom confere o total da rodada na maquininha, e
+     * depois o cliente confere o mesmo número na conta.
+     */
+    val precoDaLinhaEmCentavos: Long
+        get() = (item.precoEmCentavos + escolhas.sumOf { it.precoEmCentavos }) * quantidade
+}
 
 class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
 
@@ -292,20 +316,28 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         }
     }
 
-    /** Mais um deste item na rodada. */
-    fun porNoCarrinho(item: ItemDoCardapio) {
+    /**
+     * Mais um deste item na rodada, com as escolhas que vieram do diálogo.
+     *
+     * Escolhas iguais somam na mesma linha; diferentes abrem outra. Duas
+     * picanhas ao ponto são "2x"; uma ao ponto e uma mal passada são duas
+     * linhas, porque é o que a cozinha vai ler e o que a conta vai cobrar.
+     */
+    fun porNoCarrinho(item: ItemDoCardapio, escolhas: List<OpcionalDoCardapio> = emptyList()) {
         if (item.esgotado) return
         _painel.update { painel ->
-            val existente = painel.carrinho.find { it.item.cardapioItemId == item.cardapioItemId }
+            val mesmasEscolhas = { linha: LinhaDoCarrinho ->
+                linha.item.cardapioItemId == item.cardapioItemId &&
+                    linha.observacao == null &&
+                    linha.escolhas.map { it.opcionalId }.toSet() ==
+                    escolhas.map { it.opcionalId }.toSet()
+            }
+            val existente = painel.carrinho.find(mesmasEscolhas)
             val carrinho = if (existente == null) {
-                painel.carrinho + LinhaDoCarrinho(item, 1)
+                painel.carrinho + LinhaDoCarrinho(item = item, quantidade = 1, escolhas = escolhas)
             } else {
                 painel.carrinho.map {
-                    if (it.item.cardapioItemId == item.cardapioItemId) {
-                        it.copy(quantidade = it.quantidade + 1)
-                    } else {
-                        it
-                    }
+                    if (it.id == existente.id) it.copy(quantidade = it.quantidade + 1) else it
                 }
             }
             painel.copy(carrinho = carrinho, aviso = null)
@@ -319,34 +351,25 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
      * nenhuma outra, e o garçom não entende por que dois chopes aparecem
      * separados na conta.
      */
-    fun anotarObservacao(item: ItemDoCardapio, texto: String) {
+    fun anotarObservacao(linhaId: String, texto: String) {
         val limpo = texto.trim().take(200).ifBlank { null }
         _painel.update { painel ->
             painel.copy(
                 carrinho = painel.carrinho.map {
-                    if (it.item.cardapioItemId == item.cardapioItemId) {
-                        it.copy(observacao = limpo)
-                    } else {
-                        it
-                    }
+                    if (it.id == linhaId) it.copy(observacao = limpo) else it
                 }
             )
         }
     }
 
-    /** Menos um. Chegando a zero, a linha sai da rodada. */
-    fun tirarDoCarrinho(item: ItemDoCardapio) {
+    /** Menos um nesta linha. Chegando a zero, a linha sai da rodada. */
+    fun tirarDoCarrinho(linhaId: String) {
         _painel.update { painel ->
-            val carrinho = painel.carrinho
-                .map {
-                    if (it.item.cardapioItemId == item.cardapioItemId) {
-                        it.copy(quantidade = it.quantidade - 1)
-                    } else {
-                        it
-                    }
-                }
-                .filter { it.quantidade > 0 }
-            painel.copy(carrinho = carrinho)
+            painel.copy(
+                carrinho = painel.carrinho
+                    .map { if (it.id == linhaId) it.copy(quantidade = it.quantidade - 1) else it }
+                    .filter { it.quantidade > 0 }
+            )
         }
     }
 
@@ -368,11 +391,14 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                 api.lancarRodada(
                     comandaId,
                     RodadaParaLancar(
-                        itens = painel.carrinho.map {
+                        itens = painel.carrinho.map { linha ->
                             ItemParaLancar(
-                                cardapioItemId = it.item.cardapioItemId,
-                                quantidade = it.quantidade,
-                                observacao = it.observacao,
+                                cardapioItemId = linha.item.cardapioItemId,
+                                quantidade = linha.quantidade,
+                                observacao = linha.observacao,
+                                opcionais = linha.escolhas.map {
+                                    EscolhaParaLancar(it.opcionalId)
+                                },
                             )
                         },
                     ),
