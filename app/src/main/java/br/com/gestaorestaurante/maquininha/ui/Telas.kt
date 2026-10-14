@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import br.com.gestaorestaurante.maquininha.api.ItemDoCardapio
+import br.com.gestaorestaurante.maquininha.api.MesaLivre
 import br.com.gestaorestaurante.maquininha.api.OpcionalDoCardapio
 import br.com.gestaorestaurante.maquininha.pagamento.FormaDePagamento
 import br.com.gestaorestaurante.maquininha.pagamento.ResultadoDaCobranca
@@ -61,6 +62,8 @@ fun Tela(painel: Painel, acoes: Acoes) {
         is EstadoDaTela.Mesas -> TelaDeMesas(painel, acoes)
         is EstadoDaTela.Conta -> TelaDaConta(painel, acoes)
         is EstadoDaTela.Cardapio -> TelaDoCardapio(painel, acoes)
+        is EstadoDaTela.EscolhendoMesa -> TelaDeEscolhaDaMesa(painel, acoes)
+        is EstadoDaTela.AbrindoMesa -> TelaDeAberturaDaMesa(painel, acoes)
         is EstadoDaTela.Cobrando ->
             TelaDeAndamento(painel.estado.mensagem, "Siga as instruções no visor")
         is EstadoDaTela.Terminada -> TelaDeResultado(painel, painel.estado, acoes)
@@ -81,6 +84,10 @@ class Acoes(
     val entrarComPin: (String) -> Unit,
     val sairDoTurno: () -> Unit,
     val atualizarMesas: () -> Unit,
+    val irParaAbertura: () -> Unit,
+    val escolherMesaLivre: (MesaLivre) -> Unit,
+    /** Pessoas e nome do cliente; o nome vai vazio onde a casa não o exige. */
+    val abrirMesa: (Int, String) -> Unit,
     val abrirConta: (String) -> Unit,
     val abrirCardapio: () -> Unit,
     val porNoCarrinho: (ItemDoCardapio, List<OpcionalDoCardapio>) -> Unit,

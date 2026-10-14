@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import br.com.gestaorestaurante.maquininha.api.ItemDoCardapio
 import br.com.gestaorestaurante.maquininha.api.MesaAberta
+import br.com.gestaorestaurante.maquininha.api.MesaLivre
 import br.com.gestaorestaurante.maquininha.api.OpcionalDoCardapio
 
 /**
@@ -171,7 +172,9 @@ internal fun TelaDeMesas(painel: Painel, acoes: Acoes) {
             TextButton(onClick = acoes.sairDoTurno) { Text("Sair") }
         }
 
-        if (!painel.caixaAberto) {
+        // O caixa fechado é problema de quem vai cobrar; para o garçom, é um
+        // alarme vermelho sobre algo que ele não resolve nem precisa.
+        if (!painel.caixaAberto && painel.podeReceber) {
             Aviso(
                 "Nenhum caixa aberto: o pagamento não entra. Abra o caixa no sistema antes de cobrar.",
                 MaterialTheme.colorScheme.error,
@@ -194,14 +197,42 @@ internal fun TelaDeMesas(painel: Painel, acoes: Acoes) {
             }
         }
 
+        /*
+         * Abrir mesa fica aqui, na tela de quem chega: o garçom que recebe uma
+         * mesa nova tinha de voltar ao tablet do balcão só para abri-la, e só
+         * então podia lançar o pedido pelo aparelho.
+         *
+         * Preenchido, e a cobrança avulsa contornada: no turno do garçom esta é
+         * a ação do começo do atendimento, e a avulsa é do caixa.
+         */
+        if (painel.podeAbrir) {
+            Button(
+                onClick = acoes.irParaAbertura,
+                enabled = painel.livres.isNotEmpty(),
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Text(
+                    if (painel.livres.isEmpty()) {
+                        "Nenhuma mesa livre"
+                    } else {
+                        "Abrir mesa (${painel.livres.size} livre${if (painel.livres.size > 1) "s" else ""})"
+                    },
+                    fontSize = 16.sp,
+                )
+            }
+        }
+
         // A cobrança avulsa continua existindo: é a venda de balcão que não
-        // passou por comanda nenhuma.
-        OutlinedButton(
-            onClick = acoes.cobrancaAvulsa,
-            shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-        ) {
-            Text("Cobrar um valor avulso", fontSize = 16.sp)
+        // passou por comanda nenhuma — e é do caixa, não do garçom.
+        if (painel.podeReceber) {
+            OutlinedButton(
+                onClick = acoes.cobrancaAvulsa,
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Text("Cobrar um valor avulso", fontSize = 16.sp)
+            }
         }
     }
 }
@@ -364,30 +395,38 @@ internal fun TelaDaConta(painel: Painel, acoes: Acoes) {
             }
         }
 
-        Button(
-            onClick = { acoes.cobrarDaConta(true) },
-            enabled = conta.faltaEmCentavos > 0 && painel.caixaAberto,
-            shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.fillMaxWidth().height(60.dp),
-        ) {
-            Text(
-                "Cobrar ${emReais(conta.faltaEmCentavos)}",
-                fontSize = 19.sp,
-                fontWeight = FontWeight.Bold,
-            )
-        }
         /*
-         * Quem paga a parte dele e vai embora: o teclado abre zerado, e a
-         * conta continua aberta com o resto — foi a decisão do dono sobre
-         * pagamento parcial na maquininha.
+         * Os dois botões de cobrança só para quem recebe pagamento. Para o
+         * garçom, esta tela é a conta da mesa e o caminho para lançar a
+         * rodada — oferecer "Cobrar" a ele seria um caminho que termina em
+         * recusa com o cartão do cliente na mão.
          */
-        OutlinedButton(
-            onClick = { acoes.cobrarDaConta(false) },
-            enabled = conta.faltaEmCentavos > 0 && painel.caixaAberto,
-            shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-        ) {
-            Text("Cobrar outro valor", fontSize = 16.sp)
+        if (painel.podeReceber) {
+            Button(
+                onClick = { acoes.cobrarDaConta(true) },
+                enabled = conta.faltaEmCentavos > 0 && painel.caixaAberto,
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth().height(60.dp),
+            ) {
+                Text(
+                    "Cobrar ${emReais(conta.faltaEmCentavos)}",
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            /*
+             * Quem paga a parte dele e vai embora: o teclado abre zerado, e a
+             * conta continua aberta com o resto — foi a decisão do dono sobre
+             * pagamento parcial na maquininha.
+             */
+            OutlinedButton(
+                onClick = { acoes.cobrarDaConta(false) },
+                enabled = conta.faltaEmCentavos > 0 && painel.caixaAberto,
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Text("Cobrar outro valor", fontSize = 16.sp)
+            }
         }
         /*
          * Lançar fica junto de cobrar, e não numa tela à parte: é a mesma mesa,

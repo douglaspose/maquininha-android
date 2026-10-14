@@ -150,6 +150,20 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
         }.also { if (it.unidade.isNotBlank()) configuracao.guardarUnidade(it.unidade) }
 
     /**
+     * Abre a mesa pelo aparelho.
+     *
+     * Insistir é seguro: mesa que já tem conta devolve a conta que existe, com
+     * `jaEstavaAberta`. Por isso uma resposta perdida na rede não vira duas
+     * contas na mesma mesa quando o garçom toca de novo.
+     */
+    suspend fun abrirMesa(abertura: AberturaDeMesa): RespostaDaAbertura {
+        val corpo = json.encodeToString(AberturaDeMesa.serializer(), abertura)
+        return chamar("/api/maquininha/mesas", corpo, comOperador = true) {
+            json.decodeFromString(RespostaDaAbertura.serializer(), it)
+        }
+    }
+
+    /**
      * O cardápio do salão, inteiro de uma vez.
      *
      * É o mesmo cardápio do PDV, com o preço de lá. Vem completo numa resposta

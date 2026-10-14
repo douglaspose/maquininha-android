@@ -78,6 +78,47 @@ data class RespostaDeMesas(
     /** Sem caixa aberto nenhum pagamento entra; a tela avisa antes de cobrar. */
     val caixaAberto: Boolean = true,
     val mesas: List<MesaAberta> = emptyList(),
+    /** O operador pode abrir mesa; sem isso o aparelho nem mostra o botão. */
+    val podeAbrir: Boolean = false,
+    /**
+     * O operador recebe pagamento. Verdadeiro por omissão: servidor antigo não
+     * manda o campo, e esse servidor também não deixa entrar quem não recebe —
+     * o aparelho do caixa continua igual.
+     */
+    val podeReceber: Boolean = true,
+    /** As mesas sem conta aberta, para o garçom que recebe quem acabou de sentar. */
+    val livres: List<MesaLivre> = emptyList(),
+    /** A casa exige o nome do cliente para abrir — o aparelho pergunta antes. */
+    val exigeNomeCliente: Boolean = false,
+)
+
+@Serializable
+data class MesaLivre(
+    val mesaId: String,
+    /** Texto, não número: a casa batiza mesa de "12A". */
+    val numero: String = "",
+    val capacidade: Int = 0,
+    val area: String? = null,
+)
+
+/** O que a maquininha manda para abrir a mesa. */
+@Serializable
+data class AberturaDeMesa(
+    val mesaId: String,
+    val pessoas: Int,
+    val nomeCliente: String? = null,
+)
+
+@Serializable
+data class RespostaDaAbertura(
+    val ok: Boolean = false,
+    val comandaId: String = "",
+    /**
+     * A mesa já tinha conta: ou outro garçom abriu, ou é este aparelho
+     * insistindo depois de a rede engasgar. Nos dois casos a conta devolvida é
+     * a que vale, e quem chama não precisa distinguir para seguir.
+     */
+    val jaEstavaAberta: Boolean = false,
 )
 
 @Serializable

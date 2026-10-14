@@ -11,7 +11,9 @@ import br.com.gestaorestaurante.maquininha.api.ItemDoCardapio
 import br.com.gestaorestaurante.maquininha.api.EscolhaParaLancar
 import br.com.gestaorestaurante.maquininha.api.ItemParaLancar
 import br.com.gestaorestaurante.maquininha.api.OpcionalDoCardapio
+import br.com.gestaorestaurante.maquininha.api.AberturaDeMesa
 import br.com.gestaorestaurante.maquininha.api.MesaAberta
+import br.com.gestaorestaurante.maquininha.api.MesaLivre
 import br.com.gestaorestaurante.maquininha.api.PagamentoParaEnviar
 import br.com.gestaorestaurante.maquininha.api.RodadaParaLancar
 import br.com.gestaorestaurante.maquininha.config.Configuracao
@@ -55,6 +57,19 @@ sealed interface EstadoDaTela {
     /** O cardápio, para o garçom montar a rodada sem voltar ao balcão. */
     data object Cardapio : EstadoDaTela
 
+    /**
+     * As mesas livres, para o garçom que recebe quem acabou de sentar.
+     *
+     * São duas telas, e não uma: escolher a mesa é procurar um número entre
+     * dezenas, e dizer quantas pessoas são é responder uma pergunta. Juntas
+     * numa tela só, a lista de mesas empurrava o resto para fora do visor da
+     * maquininha.
+     */
+    data object EscolhendoMesa : EstadoDaTela
+
+    /** Quantas pessoas (e o nome, onde a casa exige) para a mesa escolhida. */
+    data object AbrindoMesa : EstadoDaTela
+
     /** O teclado do valor. Vem de uma conta, ou da cobrança avulsa. */
     data object Parada : EstadoDaTela
     data class Cobrando(val mensagem: String) : EstadoDaTela
@@ -79,6 +94,16 @@ data class Painel(
     val pendentesDeEnvio: Int = 0,
     /** O salão, como o servidor respondeu da última vez. */
     val mesas: List<MesaAberta> = emptyList(),
+    /** As mesas sem conta aberta, como o servidor respondeu da última vez. */
+    val livres: List<MesaLivre> = emptyList(),
+    /** Sem a permissão de abrir, o botão nem aparece. */
+    val podeAbrir: Boolean = false,
+    /** Sem a permissão de receber, a tela não oferece onde cobrar. */
+    val podeReceber: Boolean = true,
+    /** A casa exige o nome do cliente: o campo aparece e a abertura o cobra. */
+    val exigeNomeCliente: Boolean = false,
+    /** A mesa que está sendo aberta, entre escolher o número e confirmar. */
+    val mesaParaAbrir: MesaLivre? = null,
     val caixaAberto: Boolean = true,
     val buscando: Boolean = false,
     val conta: ContaDaMesa? = null,
@@ -243,6 +268,10 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
             _painel.update {
                 it.copy(
                     mesas = resposta.mesas,
+                    livres = resposta.livres,
+                    podeAbrir = resposta.podeAbrir,
+                    podeReceber = resposta.podeReceber,
+                    exigeNomeCliente = resposta.exigeNomeCliente,
                     caixaAberto = resposta.caixaAberto,
                     buscando = false,
                     aviso = null,
@@ -274,17 +303,77 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         }
     }
 
-    /** Abre a conta de uma mesa: itens, o que já foi pago e o que falta. */
-    fun abrirConta(comandaId: String) {
+    /**
+     * Vai para a lista de mesas livres.
+     *
+     * A lista que já veio com o salão é a que aparece — e não uma busca nova,
+     * que deixaria o garçom olhando "carregando" com a mesa na frente dele. Ela
+     * é atualizada a cada volta ao salão e a cada abertura.
+     */
+    fun irParaAbertura() {
+        _painel.update {
+            it.copy(estado = EstadoDaTela.EscolhendoMesa, mesaParaAbrir = null, aviso = null)
+        }
+    }
+
+    fun escolherMesaLivre(mesa: MesaLivre) {
+        _painel.update { it.copy(estado = EstadoDaTela.AbrindoMesa, mesaParaAbrir = mesa, aviso = null) }
+    }
+
+    /**
+     * Abre a mesa escolhida e cai direto na conta dela.
+     *
+     * Cair na conta não é economia de toque: o garçom que abre a mesa está
+     * abrindo porque vai lançar o pedido agora, e voltar para a lista o faria
+     * procurar a mesma mesa de novo na lista de cima.
+     *
+     * Insistir depois de uma falha é seguro: se a mesa já tiver conta — porque
+     * a resposta se perdeu na rede, ou porque outro garçom chegou junto —, o
+     * servidor devolve a conta que existe em vez de abrir a segunda.
+     */
+    fun abrirMesa(pessoas: Int, nomeCliente: String) {
+        val mesa = _painel.value.mesaParaAbrir ?: return
         viewModelScope.launch {
-            _painel.update { it.copy(estado = EstadoDaTela.Conta, buscando = true, conta = null, aviso = null) }
+            _painel.update { it.copy(buscando = true, aviso = null) }
             try {
-                val conta = api.buscarConta(comandaId)
-                _painel.update { it.copy(conta = conta, comandaId = comandaId, buscando = false) }
+                val resposta = api.abrirMesa(
+                    AberturaDeMesa(
+                        mesaId = mesa.mesaId,
+                        pessoas = pessoas,
+                        nomeCliente = nomeCliente.trim().ifBlank { null },
+                    )
+                )
+                _painel.update { it.copy(mesaParaAbrir = null) }
+                carregarConta(resposta.comandaId)
+                // O salão mudou: a mesa que era livre agora é conta aberta.
+                buscarMesas()
             } catch (e: Exception) {
                 _painel.update {
-                    it.copy(estado = EstadoDaTela.Mesas, buscando = false, aviso = e.message)
+                    it.copy(buscando = false, aviso = e.message ?: "Não foi possível abrir a mesa.")
                 }
+            }
+        }
+    }
+
+    /** Abre a conta de uma mesa: itens, o que já foi pago e o que falta. */
+    fun abrirConta(comandaId: String) {
+        viewModelScope.launch { carregarConta(comandaId) }
+    }
+
+    /*
+     * Suspensa, e não uma corrotina própria: a abertura de mesa precisa esperar
+     * a conta aparecer para só então atualizar o salão. Soltas as duas juntas,
+     * a atualização do salão terminava primeiro, desligava o `buscando` e a
+     * tela da conta ficava vazia e sem sinal de que ainda estava carregando.
+     */
+    private suspend fun carregarConta(comandaId: String) {
+        _painel.update { it.copy(estado = EstadoDaTela.Conta, buscando = true, conta = null, aviso = null) }
+        try {
+            val conta = api.buscarConta(comandaId)
+            _painel.update { it.copy(conta = conta, comandaId = comandaId, buscando = false) }
+        } catch (e: Exception) {
+            _painel.update {
+                it.copy(estado = EstadoDaTela.Mesas, buscando = false, aviso = e.message)
             }
         }
     }
@@ -428,6 +517,22 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         _painel.update {
             when (it.estado) {
                 is EstadoDaTela.Conta -> it.copy(estado = EstadoDaTela.Mesas, conta = null)
+                /*
+                 * O cardápio volta para a conta, que é o que o botão dele diz
+                 * desde sempre: ele caía aqui no `else` e levava o garçom para
+                 * a lista de mesas: quem montou meia rodada e foi conferir o
+                 * total voltava do começo, procurando a mesa de novo.
+                 */
+                is EstadoDaTela.Cardapio ->
+                    if (it.comandaId != null) {
+                        it.copy(estado = EstadoDaTela.Conta)
+                    } else {
+                        it.copy(estado = EstadoDaTela.Mesas)
+                    }
+                // A pergunta das pessoas volta para a escolha da mesa: errar o
+                // número da mesa é o engano mais provável dos dois.
+                is EstadoDaTela.AbrindoMesa ->
+                    it.copy(estado = EstadoDaTela.EscolhendoMesa, mesaParaAbrir = null)
                 is EstadoDaTela.Parada ->
                     if (it.comandaId != null) {
                         it.copy(estado = EstadoDaTela.Conta, valorEmCentavos = 0)
