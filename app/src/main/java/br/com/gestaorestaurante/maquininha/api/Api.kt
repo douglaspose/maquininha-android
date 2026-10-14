@@ -113,9 +113,17 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
         }
     }
 
-    /** Até 20 trabalhos pendentes, do mais antigo para o mais novo. */
-    suspend fun buscarFilaDeImpressao(): RespostaDaFila =
-        chamar("/api/impressao") { json.decodeFromString(RespostaDaFila.serializer(), it) }
+    /**
+     * Até 20 trabalhos pendentes, do mais antigo para o mais novo.
+     *
+     * `colunas` diz ao servidor a largura desta impressora, e ele monta o papel
+     * nela — é o que evita refluir aqui um texto já formatado em 48. Servidor
+     * antigo ignora o parâmetro e devolve 48 como sempre.
+     */
+    suspend fun buscarFilaDeImpressao(colunas: Int): RespostaDaFila =
+        chamar("/api/impressao?colunas=$colunas") {
+            json.decodeFromString(RespostaDaFila.serializer(), it)
+        }
             .also { if (it.unidade.isNotBlank()) configuracao.guardarUnidade(it.unidade) }
 
     /** Confirma o que saiu — ou relata por que não saiu. */

@@ -15,6 +15,13 @@ import kotlinx.serialization.Serializable
 data class RespostaDaFila(
     val unidade: String = "",
     val marca: MarcaImpressa? = null,
+    /**
+     * A largura em que o servidor montou estes papéis.
+     *
+     * Zero quando o servidor é antigo e não conhece o campo — e é assim que o
+     * aplicativo sabe que precisa estreitar o texto por conta própria.
+     */
+    val colunas: Int = 0,
     val trabalhos: List<TrabalhoDeImpressao> = emptyList(),
 )
 

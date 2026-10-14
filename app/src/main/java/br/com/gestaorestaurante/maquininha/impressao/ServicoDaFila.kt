@@ -53,13 +53,21 @@ class ServicoDaFila : LifecycleService() {
     private suspend fun laco() {
         while (lifecycleScope.isActive) {
             val descanso = try {
-                val resposta = api.buscarFilaDeImpressao()
+                val resposta = api.buscarFilaDeImpressao(impressora.colunas)
                 for (trabalho in resposta.trabalhos) {
                     val marca = resposta.marca
                         ?.takeIf { trabalho.comMarca }
                         ?.let { escposParaMarca(it.escpos) }
                     val cupom = lerConteudoDaFila(trabalho.titulo, trabalho.conteudo, marca)
-                        .paraLargura(impressora.colunas)
+                        /*
+                         * Estreitar aqui só quando o servidor não estreitou.
+                         *
+                         * Ele agora monta o papel na largura pedida, e o que
+                         * vem assim já está certo — reflui-lo de novo só
+                         * estragaria. O adaptador fica para o servidor antigo,
+                         * que ignora o parâmetro e responde em 48.
+                         */
+                        .let { if (resposta.colunas == impressora.colunas) it else it.paraLargura(impressora.colunas) }
                     val falha = impressora.imprimir(cupom)
                     api.confirmarImpressao(trabalho.id, ok = falha == null, erro = falha)
                 }
