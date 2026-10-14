@@ -100,6 +100,8 @@ data class Painel(
     val podeAbrir: Boolean = false,
     /** Sem a permissão de receber, a tela não oferece onde cobrar. */
     val podeReceber: Boolean = true,
+    /** Sem a permissão de pedir a conta, a tela não oferece o papel. */
+    val podePedirConta: Boolean = false,
     /** A casa exige o nome do cliente: o campo aparece e a abertura o cobra. */
     val exigeNomeCliente: Boolean = false,
     /** A mesa que está sendo aberta, entre escolher o número e confirmar. */
@@ -111,6 +113,15 @@ data class Painel(
     val comandaId: String? = null,
     /** Recado curto para a tela: o que o servidor recusou, ou a rede que caiu. */
     val aviso: String? = null,
+    /**
+     * O que deu certo, quando dar certo não aparece sozinho na tela.
+     *
+     * Separado do `aviso` porque este é vermelho: "segunda via na impressora"
+     * não é falha, e pintar as duas coisas de vermelho ensina o garçom a não
+     * ler nenhuma. Nasceu do toque em "Imprimir outra via", que acerta tudo e
+     * não muda nada no visor — o papel sai na impressora do salão, longe dali.
+     */
+    val recado: String? = null,
     /**
      * Sobe a cada PIN recusado. A tela limpa o campo quando ele muda — e não
      * quando o aviso muda, porque duas tentativas erradas seguidas dão a mesma
@@ -271,6 +282,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                     livres = resposta.livres,
                     podeAbrir = resposta.podeAbrir,
                     podeReceber = resposta.podeReceber,
+                    podePedirConta = resposta.podePedirConta,
                     exigeNomeCliente = resposta.exigeNomeCliente,
                     caixaAberto = resposta.caixaAberto,
                     buscando = false,
@@ -367,13 +379,77 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
      * tela da conta ficava vazia e sem sinal de que ainda estava carregando.
      */
     private suspend fun carregarConta(comandaId: String) {
-        _painel.update { it.copy(estado = EstadoDaTela.Conta, buscando = true, conta = null, aviso = null) }
+        _painel.update {
+            it.copy(
+                estado = EstadoDaTela.Conta,
+                buscando = true,
+                conta = null,
+                aviso = null,
+                recado = null,
+            )
+        }
         try {
             val conta = api.buscarConta(comandaId)
             _painel.update { it.copy(conta = conta, comandaId = comandaId, buscando = false) }
         } catch (e: Exception) {
             _painel.update {
                 it.copy(estado = EstadoDaTela.Mesas, buscando = false, aviso = e.message)
+            }
+        }
+    }
+
+    /**
+     * A mesa pediu a conta: fechamento marcado e papel na impressora.
+     *
+     * Depois, a conta é relida: é ela que diz à tela que agora está em
+     * fechamento, e portanto que o caminho dali é reabrir ou cobrar. O salão
+     * também, porque a mesa mudou de cor no mapa de quem está no balcão.
+     *
+     * Insistir é seguro e é rotina: a segunda folha sai marcada como segunda
+     * via, e o aviso diz isso — senão o garçom fica sem saber se o toque pegou.
+     */
+    fun pedirAConta() {
+        val comandaId = _painel.value.comandaId ?: return
+        viewModelScope.launch {
+            _painel.update { it.copy(buscando = true, aviso = null) }
+            try {
+                val resposta = api.pedirAConta(comandaId)
+                // O recado vem depois de reler a conta: é a releitura que o
+                // apaga, e o garçom tem de ficar com ele na tela.
+                carregarConta(comandaId)
+                buscarMesas()
+                _painel.update {
+                    it.copy(
+                        buscando = false,
+                        recado = if (resposta.segundaVia) {
+                            "Segunda via na impressora."
+                        } else {
+                            "Conta pedida. A folha está saindo."
+                        },
+                    )
+                }
+            } catch (e: Exception) {
+                _painel.update {
+                    it.copy(buscando = false, aviso = e.message ?: "Não foi possível pedir a conta.")
+                }
+            }
+        }
+    }
+
+    /** "Traz mais uma cerveja" depois de pedir a conta. */
+    fun reabrirConta() {
+        val comandaId = _painel.value.comandaId ?: return
+        viewModelScope.launch {
+            _painel.update { it.copy(buscando = true, aviso = null) }
+            try {
+                api.reabrirConta(comandaId)
+                _painel.update { it.copy(buscando = false) }
+                carregarConta(comandaId)
+                buscarMesas()
+            } catch (e: Exception) {
+                _painel.update {
+                    it.copy(buscando = false, aviso = e.message ?: "Não foi possível reabrir.")
+                }
             }
         }
     }

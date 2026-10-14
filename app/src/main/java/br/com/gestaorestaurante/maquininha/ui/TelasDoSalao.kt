@@ -319,11 +319,26 @@ internal fun TelaDaConta(painel: Painel, acoes: Acoes) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = acoes.voltar) { Text("← Mesas") }
             Spacer(Modifier.weight(1f))
-            Text(
-                conta?.let { it.mesa ?: "Comanda ${it.numero}" }.orEmpty(),
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-            )
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    conta?.let { it.mesa ?: "Comanda ${it.numero}" }.orEmpty(),
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                /*
+                 * Conta pedida precisa estar escrito, e não só implícito nos
+                 * botões: é o que explica por que "Lançar itens" sumiu da tela
+                 * e um "Reabrir" apareceu no lugar.
+                 */
+                if (conta?.status == "FECHANDO") {
+                    Text(
+                        "conta pedida",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                    )
+                }
+            }
         }
 
         if (conta == null) {
@@ -332,6 +347,14 @@ internal fun TelaDaConta(painel: Painel, acoes: Acoes) {
             }
             return@Column
         }
+
+        /*
+         * A conta não mostrava recado nenhum: o que o servidor recusasse aqui
+         * — conta já paga, rede fora — sumia, e o garçom ficava tocando num
+         * botão que parecia não fazer nada.
+         */
+        painel.aviso?.let { Aviso(it, MaterialTheme.colorScheme.error) }
+        painel.recado?.let { Aviso(it, MaterialTheme.colorScheme.primary) }
 
         Surface(
             color = MaterialTheme.colorScheme.surface,
@@ -429,15 +452,51 @@ internal fun TelaDaConta(painel: Painel, acoes: Acoes) {
             }
         }
         /*
+         * "A conta, por favor" dita ao garçom que está na mesa: daqui sai o
+         * fechamento, que acende a mesa no mapa do salão, e a folha que o
+         * cliente confere. Antes disto, era a hora de voltar ao balcão.
+         */
+        if (painel.podePedirConta) {
+            OutlinedButton(
+                onClick = acoes.pedirAConta,
+                enabled = !painel.buscando,
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Text(
+                    // Pedida uma vez, o que o garçom faz de novo é tirar outra
+                    // via — e é isso que o botão passa a prometer.
+                    if (conta.status == "FECHANDO") "Imprimir outra via" else "Pedir a conta",
+                    fontSize = 16.sp,
+                )
+            }
+        }
+
+        /*
          * Lançar fica junto de cobrar, e não numa tela à parte: é a mesma mesa,
          * e o garçom que acabou de conferir a conta é quem ouve "traz mais uma".
+         *
+         * Em fechamento o servidor recusa item novo, então no lugar de lançar
+         * vem reabrir: deixar "Lançar itens" ali seria mandar o garçom montar
+         * uma rodada inteira para ouvir "a conta está em fechamento" no fim.
          */
-        OutlinedButton(
-            onClick = acoes.abrirCardapio,
-            shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-        ) {
-            Text("Lançar itens", fontSize = 16.sp)
+        if (conta.status == "FECHANDO") {
+            OutlinedButton(
+                onClick = acoes.reabrirConta,
+                enabled = !painel.buscando,
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Text("Reabrir para lançar", fontSize = 16.sp)
+            }
+        } else {
+            OutlinedButton(
+                onClick = acoes.abrirCardapio,
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Text("Lançar itens", fontSize = 16.sp)
+            }
         }
     }
 }

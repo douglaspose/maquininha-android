@@ -183,6 +183,23 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
         }
     }
 
+    /**
+     * A mesa pediu a conta: entra em fechamento e a folha vai para a impressora.
+     *
+     * Repetir é esperado — "sumiu a conta", "manda outra via" —, e a partir da
+     * segunda o papel sai marcado como segunda via.
+     */
+    suspend fun pedirAConta(comandaId: String): RespostaDaConferencia =
+        chamar("/api/maquininha/comandas/$comandaId/conferencia", "{}", comOperador = true) {
+            json.decodeFromString(RespostaDaConferencia.serializer(), it)
+        }
+
+    /** "Traz mais uma cerveja": a conta volta a aceitar item. */
+    suspend fun reabrirConta(comandaId: String): RespostaDaReabertura =
+        chamar("/api/maquininha/comandas/$comandaId/reabrir", "{}", comOperador = true) {
+            json.decodeFromString(RespostaDaReabertura.serializer(), it)
+        }
+
     /** A conta de uma mesa: itens, o que já foi pago e o que falta. */
     suspend fun buscarConta(comandaId: String): ContaDaMesa =
         chamar("/api/maquininha/comandas/$comandaId", comOperador = true) {

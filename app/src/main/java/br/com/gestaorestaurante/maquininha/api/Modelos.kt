@@ -86,6 +86,8 @@ data class RespostaDeMesas(
      * o aparelho do caixa continua igual.
      */
     val podeReceber: Boolean = true,
+    /** O operador pode pedir a conta da mesa: imprime a parcial, ou recebe. */
+    val podePedirConta: Boolean = false,
     /** As mesas sem conta aberta, para o garçom que recebe quem acabou de sentar. */
     val livres: List<MesaLivre> = emptyList(),
     /** A casa exige o nome do cliente para abrir — o aparelho pergunta antes. */
@@ -99,6 +101,21 @@ data class MesaLivre(
     val numero: String = "",
     val capacidade: Int = 0,
     val area: String? = null,
+)
+
+@Serializable
+data class RespostaDaConferencia(
+    val ok: Boolean = false,
+    val fechando: Boolean = false,
+    /** A folha saiu marcada como segunda via: já havia uma antes. */
+    val segundaVia: Boolean = false,
+)
+
+@Serializable
+data class RespostaDaReabertura(
+    val ok: Boolean = false,
+    /** Falso quer dizer que já estava aberta, e isso não é erro. */
+    val reaberta: Boolean = false,
 )
 
 /** O que a maquininha manda para abrir a mesa. */
@@ -143,6 +160,11 @@ data class ContaDaMesa(
     val mesa: String? = null,
     val nomeCliente: String? = null,
     val pessoas: Int = 1,
+    /**
+     * ABERTA, FECHANDO ou PAGA. Em fechamento a conta não recebe item novo — é
+     * o que decide se a tela oferece lançar ou reabrir.
+     */
+    val status: String = "ABERTA",
     val subtotalEmCentavos: Long = 0,
     val descontoEmCentavos: Long = 0,
     val taxaServicoEmCentavos: Long = 0,

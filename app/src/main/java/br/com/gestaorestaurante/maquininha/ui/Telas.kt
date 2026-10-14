@@ -90,6 +90,8 @@ class Acoes(
     val abrirMesa: (Int, String) -> Unit,
     val abrirConta: (String) -> Unit,
     val abrirCardapio: () -> Unit,
+    val pedirAConta: () -> Unit,
+    val reabrirConta: () -> Unit,
     val porNoCarrinho: (ItemDoCardapio, List<OpcionalDoCardapio>) -> Unit,
     val tirarDoCarrinho: (String) -> Unit,
     val lancarRodada: () -> Unit,
