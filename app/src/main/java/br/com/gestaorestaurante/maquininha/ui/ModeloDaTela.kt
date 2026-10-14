@@ -324,23 +324,8 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
      * linhas, porque é o que a cozinha vai ler e o que a conta vai cobrar.
      */
     fun porNoCarrinho(item: ItemDoCardapio, escolhas: List<OpcionalDoCardapio> = emptyList()) {
-        if (item.esgotado) return
         _painel.update { painel ->
-            val mesmasEscolhas = { linha: LinhaDoCarrinho ->
-                linha.item.cardapioItemId == item.cardapioItemId &&
-                    linha.observacao == null &&
-                    linha.escolhas.map { it.opcionalId }.toSet() ==
-                    escolhas.map { it.opcionalId }.toSet()
-            }
-            val existente = painel.carrinho.find(mesmasEscolhas)
-            val carrinho = if (existente == null) {
-                painel.carrinho + LinhaDoCarrinho(item = item, quantidade = 1, escolhas = escolhas)
-            } else {
-                painel.carrinho.map {
-                    if (it.id == existente.id) it.copy(quantidade = it.quantidade + 1) else it
-                }
-            }
-            painel.copy(carrinho = carrinho, aviso = null)
+            painel.copy(carrinho = porNaRodada(painel.carrinho, item, escolhas), aviso = null)
         }
     }
 
@@ -352,25 +337,12 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
      * separados na conta.
      */
     fun anotarObservacao(linhaId: String, texto: String) {
-        val limpo = texto.trim().take(200).ifBlank { null }
-        _painel.update { painel ->
-            painel.copy(
-                carrinho = painel.carrinho.map {
-                    if (it.id == linhaId) it.copy(observacao = limpo) else it
-                }
-            )
-        }
+        _painel.update { it.copy(carrinho = anotarNaRodada(it.carrinho, linhaId, texto)) }
     }
 
     /** Menos um nesta linha. Chegando a zero, a linha sai da rodada. */
     fun tirarDoCarrinho(linhaId: String) {
-        _painel.update { painel ->
-            painel.copy(
-                carrinho = painel.carrinho
-                    .map { if (it.id == linhaId) it.copy(quantidade = it.quantidade - 1) else it }
-                    .filter { it.quantidade > 0 }
-            )
-        }
+        _painel.update { it.copy(carrinho = tirarDaRodada(it.carrinho, linhaId)) }
     }
 
     /**
@@ -468,17 +440,13 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
     }
 
     fun digitar(digito: Char) {
+        // Tecla durante a transação não entra: a maquininha está com o cartão.
         if (_painel.value.estado is EstadoDaTela.Cobrando) return
-        _painel.update {
-            // Entrada em centavos, da direita para a esquerda, como toda
-            // maquininha: quem digita 1 5 0 0 quer R$ 15,00.
-            val novo = it.valorEmCentavos * 10 + (digito - '0')
-            if (novo > 99_999_999L) it else it.copy(valorEmCentavos = novo)
-        }
+        _painel.update { it.copy(valorEmCentavos = digitarCentavo(it.valorEmCentavos, digito)) }
     }
 
     fun apagar() {
-        _painel.update { it.copy(valorEmCentavos = it.valorEmCentavos / 10) }
+        _painel.update { it.copy(valorEmCentavos = apagarCentavo(it.valorEmCentavos)) }
     }
 
     /**
