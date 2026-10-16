@@ -542,8 +542,9 @@ private fun TelaDeConfiguracao(painel: Painel, acoes: Acoes) {
     ) {
         Text("Ajustes do aparelho", fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(
-            "O token é o mesmo da unidade, o que o agente de impressão usa. " +
-                "Ele diz de qual restaurante esta maquininha é.",
+            "O token diz de qual restaurante este aparelho é. Pegue o dele em " +
+                "Gestão › Aparelhos: cadastrado, ele se corta sozinho se sumir. " +
+                "O token da unidade também serve, e vale para todos os aparelhos.",
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -559,7 +560,7 @@ private fun TelaDeConfiguracao(painel: Painel, acoes: Acoes) {
         OutlinedTextField(
             value = token,
             onValueChange = { token = it },
-            label = { Text("Token da unidade") },
+            label = { Text("Token do aparelho") },
             singleLine = true,
             // Monoespaçada: é um token que alguém vai conferir caractere a
             // caractere quando o servidor responder 401.
