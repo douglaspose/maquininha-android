@@ -145,7 +145,10 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
      * antigo ignora o parâmetro e devolve 48 como sempre.
      */
     suspend fun buscarFilaDeImpressao(colunas: Int): RespostaDaFila =
-        chamar("/api/impressao?colunas=$colunas") {
+        // O apelido vai junto para a fila saber quem levou cada papel: ela
+        // entrega cada trabalho a um agente só, e a tela de impressão mostra
+        // qual aparelho está puxando.
+        chamar("/api/impressao?colunas=$colunas&agente=${configuracao.agente()}") {
             json.decodeFromString(RespostaDaFila.serializer(), it)
         }
             .also { if (it.unidade.isNotBlank()) configuracao.guardarUnidade(it.unidade) }
