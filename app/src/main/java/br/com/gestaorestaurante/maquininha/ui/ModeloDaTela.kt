@@ -70,6 +70,12 @@ sealed interface EstadoDaTela {
     /** Quantas pessoas (e o nome, onde a casa exige) para a mesa escolhida. */
     data object AbrindoMesa : EstadoDaTela
 
+    /**
+     * Para onde a conta vai. É a mesma grade de mesas livres da abertura, de
+     * propósito: "escolher uma mesa vazia" é o mesmo gesto nas duas vezes.
+     */
+    data object EscolhendoDestino : EstadoDaTela
+
     /** O teclado do valor. Vem de uma conta, ou da cobrança avulsa. */
     data object Parada : EstadoDaTela
     data class Cobrando(val mensagem: String) : EstadoDaTela
@@ -102,6 +108,8 @@ data class Painel(
     val podeReceber: Boolean = true,
     /** Sem a permissão de pedir a conta, a tela não oferece o papel. */
     val podePedirConta: Boolean = false,
+    /** Sem a permissão de transferir, a tela não oferece mudar de mesa. */
+    val podeTransferir: Boolean = false,
     /** A casa exige o nome do cliente: o campo aparece e a abertura o cobra. */
     val exigeNomeCliente: Boolean = false,
     /** A mesa que está sendo aberta, entre escolher o número e confirmar. */
@@ -283,6 +291,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                     podeAbrir = resposta.podeAbrir,
                     podeReceber = resposta.podeReceber,
                     podePedirConta = resposta.podePedirConta,
+                    podeTransferir = resposta.podeTransferir,
                     exigeNomeCliente = resposta.exigeNomeCliente,
                     caixaAberto = resposta.caixaAberto,
                     buscando = false,
@@ -431,6 +440,45 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
             } catch (e: Exception) {
                 _painel.update {
                     it.copy(buscando = false, aviso = e.message ?: "Não foi possível pedir a conta.")
+                }
+            }
+        }
+    }
+
+    /** Abre a grade de mesas livres para escolher o destino da conta. */
+    fun irParaTransferencia() {
+        _painel.update { it.copy(estado = EstadoDaTela.EscolhendoDestino, aviso = null) }
+    }
+
+    /**
+     * Muda a conta de mesa e volta para ela, já no lugar novo.
+     *
+     * Voltar para a conta, e não para o salão: quem transferiu estava
+     * atendendo aquela mesa e continua atendendo — o que mudou foi onde ela
+     * está. O salão é relido porque duas mesas trocaram de estado.
+     *
+     * A recusa mais comum é a mesa ter sido ocupada no meio do caminho, e ela
+     * volta do servidor como frase pronta ("A mesa 12 já tem a comanda #87
+     * aberta."): a tela mostra e o garçom escolhe outra.
+     */
+    fun transferirPara(mesa: MesaLivre) {
+        val comandaId = _painel.value.comandaId ?: return
+        viewModelScope.launch {
+            _painel.update { it.copy(buscando = true, aviso = null) }
+            try {
+                val resposta = api.transferirMesa(comandaId, mesa.mesaId)
+                _painel.update { it.copy(estado = EstadoDaTela.Conta) }
+                carregarConta(comandaId)
+                buscarMesas()
+                _painel.update {
+                    it.copy(
+                        buscando = false,
+                        recado = if (resposta.mudou) "Conta na mesa ${resposta.mesa}." else null,
+                    )
+                }
+            } catch (e: Exception) {
+                _painel.update {
+                    it.copy(buscando = false, aviso = e.message ?: "Não foi possível transferir.")
                 }
             }
         }
@@ -631,6 +679,8 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                 // número da mesa é o engano mais provável dos dois.
                 is EstadoDaTela.AbrindoMesa ->
                     it.copy(estado = EstadoDaTela.EscolhendoMesa, mesaParaAbrir = null)
+                // Escolher o destino volta para a conta, que é de onde se veio.
+                is EstadoDaTela.EscolhendoDestino -> it.copy(estado = EstadoDaTela.Conta)
                 is EstadoDaTela.Parada ->
                     if (it.comandaId != null) {
                         it.copy(estado = EstadoDaTela.Conta, valorEmCentavos = 0)

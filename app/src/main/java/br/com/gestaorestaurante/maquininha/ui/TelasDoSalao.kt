@@ -524,6 +524,22 @@ internal fun TelaDaConta(painel: Painel, acoes: Acoes) {
         }
 
         /*
+         * Mudar de mesa é do atendimento, e fica com o resto dele: "dá para
+         * sentar lá fora?" é dito ao garçom que está de pé nesta mesa, e a
+         * conta que ele tem na mão é esta.
+         */
+        if (painel.podeTransferir) {
+            OutlinedButton(
+                onClick = acoes.irParaTransferencia,
+                enabled = !painel.buscando,
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Text("Transferir mesa", fontSize = 16.sp)
+            }
+        }
+
+        /*
          * Lançar fica junto de cobrar, e não numa tela à parte: é a mesma mesa,
          * e o garçom que acabou de conferir a conta é quem ouve "traz mais uma".
          *

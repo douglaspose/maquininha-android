@@ -194,6 +194,19 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
             json.decodeFromString(RespostaDaConferencia.serializer(), it)
         }
 
+    /**
+     * Muda a conta de mesa.
+     *
+     * Insistir é seguro: a conta que já está na mesa pedida volta com
+     * `mudou: false` em vez de uma segunda transferência no diário.
+     */
+    suspend fun transferirMesa(comandaId: String, mesaDestinoId: String): RespostaDaTransferencia {
+        val corpo = json.encodeToString(MesaDeDestino.serializer(), MesaDeDestino(mesaDestinoId))
+        return chamar("/api/maquininha/comandas/$comandaId/transferir", corpo, comOperador = true) {
+            json.decodeFromString(RespostaDaTransferencia.serializer(), it)
+        }
+    }
+
     /** Alguém foi até a mesa: o selo do chamado apaga. */
     suspend fun atenderChamado(comandaId: String): RespostaDoAtendimento =
         chamar("/api/maquininha/comandas/$comandaId/atender", "{}", comOperador = true) {

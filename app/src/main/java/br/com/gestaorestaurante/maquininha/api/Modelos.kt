@@ -88,6 +88,8 @@ data class RespostaDeMesas(
     val podeReceber: Boolean = true,
     /** O operador pode pedir a conta da mesa: imprime a parcial, ou recebe. */
     val podePedirConta: Boolean = false,
+    /** O operador pode mudar a conta de mesa; sem isso, o botão nem aparece. */
+    val podeTransferir: Boolean = false,
     /** As mesas sem conta aberta, para o garçom que recebe quem acabou de sentar. */
     val livres: List<MesaLivre> = emptyList(),
     /** A casa exige o nome do cliente para abrir — o aparelho pergunta antes. */
@@ -100,7 +102,24 @@ data class MesaLivre(
     /** Texto, não número: a casa batiza mesa de "12A". */
     val numero: String = "",
     val capacidade: Int = 0,
+    /**
+     * LIVRE, SUJA ou RESERVADA. Mesa por limpar continua na lista — está livre
+     * para receber gente —, mas a tela diz, para o garçom levar um pano junto.
+     */
+    val status: String = "LIVRE",
     val area: String? = null,
+)
+
+@Serializable
+data class MesaDeDestino(val mesaDestinoId: String)
+
+@Serializable
+data class RespostaDaTransferencia(
+    val ok: Boolean = false,
+    /** O número da mesa onde a conta ficou. */
+    val mesa: String = "",
+    /** Falso quer dizer que ela já estava lá: toque repetido, ou reenvio. */
+    val mudou: Boolean = false,
 )
 
 @Serializable

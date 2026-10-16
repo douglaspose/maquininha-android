@@ -57,14 +57,50 @@ private val FILEIRAS_DE_PESSOAS = listOf(listOf(1, 2, 3, 4), listOf(5, 6, 8, 10)
 
 @Composable
 internal fun TelaDeEscolhaDaMesa(painel: Painel, acoes: Acoes) {
+    GradeDeMesasLivres(
+        painel = painel,
+        titulo = "Abrir mesa",
+        voltarPara = "← Mesas",
+        aoVoltar = acoes.voltar,
+        aoEscolher = acoes.escolherMesaLivre,
+    )
+}
+
+/**
+ * Para onde a conta vai.
+ *
+ * A mesma grade da abertura, e o mesmo gesto — procurar um número de mesa
+ * vazia. O que muda é o cabeçalho, que diz qual conta está sendo movida: no
+ * meio do salão, com duas contas na cabeça, é fácil mover a errada.
+ */
+@Composable
+internal fun TelaDeDestinoDaConta(painel: Painel, acoes: Acoes) {
+    val conta = painel.conta
+    GradeDeMesasLivres(
+        painel = painel,
+        titulo = conta?.let { "Mover ${it.mesa ?: "comanda ${it.numero}"}" } ?: "Mover a conta",
+        voltarPara = "← Conta",
+        aoVoltar = acoes.voltar,
+        aoEscolher = acoes.transferirPara,
+    )
+}
+
+@Composable
+private fun GradeDeMesasLivres(
+    painel: Painel,
+    titulo: String,
+    voltarPara: String,
+    aoVoltar: () -> Unit,
+    aoEscolher: (MesaLivre) -> Unit,
+) {
     Column(
         Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = acoes.voltar) { Text("← Mesas") }
+            TextButton(onClick = aoVoltar) { Text(voltarPara) }
             Spacer(Modifier.weight(1f))
-            Text("Abrir mesa", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text(titulo, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         }
 
         painel.aviso?.let { Aviso(it, MaterialTheme.colorScheme.error) }
@@ -89,7 +125,7 @@ internal fun TelaDeEscolhaDaMesa(painel: Painel, acoes: Acoes) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(painel.livres, key = { it.mesaId }) { mesa ->
-                    MesaLivreNaGrade(mesa) { acoes.escolherMesaLivre(mesa) }
+                    MesaLivreNaGrade(mesa, habilitada = !painel.buscando) { aoEscolher(mesa) }
                 }
             }
         }
@@ -97,9 +133,14 @@ internal fun TelaDeEscolhaDaMesa(painel: Painel, acoes: Acoes) {
 }
 
 @Composable
-private fun MesaLivreNaGrade(mesa: MesaLivre, aoTocar: () -> Unit) {
+private fun MesaLivreNaGrade(mesa: MesaLivre, habilitada: Boolean = true, aoTocar: () -> Unit) {
+    // Mesa por limpar continua na grade: está livre para receber gente, e
+    // esconder metade do salão numa casa sem limpeza automática seria pior do
+    // que mostrar uma mesa que precisa de um pano.
+    val porLimpar = mesa.status == "SUJA"
     Surface(
         onClick = aoTocar,
+        enabled = habilitada,
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -128,9 +169,14 @@ private fun MesaLivreNaGrade(mesa: MesaLivre, aoTocar: () -> Unit) {
                 )
             }
             Text(
-                "${mesa.capacidade} lug.",
+                if (porLimpar) "LIMPAR" else "${mesa.capacidade} lug.",
                 fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = if (porLimpar) FontWeight.Bold else FontWeight.Normal,
+                color = if (porLimpar) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
                 maxLines = 1,
             )
         }

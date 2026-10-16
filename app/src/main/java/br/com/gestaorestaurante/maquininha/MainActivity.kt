@@ -72,6 +72,8 @@ class MainActivity : ComponentActivity() {
                             irParaAbertura = modelo::irParaAbertura,
                             escolherMesaLivre = modelo::escolherMesaLivre,
                             abrirMesa = modelo::abrirMesa,
+                            irParaTransferencia = modelo::irParaTransferencia,
+                            transferirPara = modelo::transferirPara,
                             abrirConta = modelo::abrirConta,
                             abrirCardapio = modelo::abrirCardapio,
                             atenderChamado = modelo::atenderChamado,

@@ -64,6 +64,7 @@ fun Tela(painel: Painel, acoes: Acoes) {
         is EstadoDaTela.Cardapio -> TelaDoCardapio(painel, acoes)
         is EstadoDaTela.EscolhendoMesa -> TelaDeEscolhaDaMesa(painel, acoes)
         is EstadoDaTela.AbrindoMesa -> TelaDeAberturaDaMesa(painel, acoes)
+        is EstadoDaTela.EscolhendoDestino -> TelaDeDestinoDaConta(painel, acoes)
         is EstadoDaTela.Cobrando ->
             TelaDeAndamento(painel.estado.mensagem, "Siga as instruções no visor")
         is EstadoDaTela.Terminada -> TelaDeResultado(painel, painel.estado, acoes)
@@ -88,6 +89,8 @@ class Acoes(
     val escolherMesaLivre: (MesaLivre) -> Unit,
     /** Pessoas e nome do cliente; o nome vai vazio onde a casa não o exige. */
     val abrirMesa: (Int, String) -> Unit,
+    val irParaTransferencia: () -> Unit,
+    val transferirPara: (MesaLivre) -> Unit,
     val abrirConta: (String) -> Unit,
     val abrirCardapio: () -> Unit,
     val atenderChamado: () -> Unit,
