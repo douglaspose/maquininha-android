@@ -104,6 +104,13 @@ data class MesaLivre(
 )
 
 @Serializable
+data class RespostaDoAtendimento(
+    val ok: Boolean = false,
+    /** Falso quer dizer que o selo já não estava lá: alguém chegou antes. */
+    val atendido: Boolean = false,
+)
+
+@Serializable
 data class RespostaDaConferencia(
     val ok: Boolean = false,
     val fechando: Boolean = false,
@@ -148,6 +155,8 @@ data class MesaAberta(
     val pessoas: Int = 1,
     /** A conta já foi pedida: é onde o caixa costuma estar. */
     val fechando: Boolean = false,
+    /** Desde quando o cliente está de mão levantada; nulo quando ninguém chamou. */
+    val chamadoEm: String? = null,
     val totalEmCentavos: Long = 0,
     val recebidoEmCentavos: Long = 0,
     val faltaEmCentavos: Long = 0,
@@ -165,6 +174,8 @@ data class ContaDaMesa(
      * o que decide se a tela oferece lançar ou reabrir.
      */
     val status: String = "ABERTA",
+    /** Desde quando a mesa está chamando; nulo quando ninguém chamou. */
+    val chamadoEm: String? = null,
     val subtotalEmCentavos: Long = 0,
     val descontoEmCentavos: Long = 0,
     val taxaServicoEmCentavos: Long = 0,

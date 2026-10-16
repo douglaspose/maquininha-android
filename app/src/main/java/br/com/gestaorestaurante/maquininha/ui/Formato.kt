@@ -22,3 +22,34 @@ fun emReais(centavos: Long): String {
     val comPontos = reais.toString().reversed().chunked(3).joinToString(".").reversed()
     return "R$ $sinal$comPontos,${resto.toString().padStart(2, '0')}"
 }
+
+/**
+ * Há quanto tempo: "agora", "há 3 min", "há 1h12".
+ *
+ * O servidor manda o instante em ISO 8601 UTC; o que o garçom precisa ler é a
+ * espera, não a hora. Quem está de mão levantada conta os minutos, e é por eles
+ * que ele decide a qual mesa vai primeiro.
+ *
+ * `SimpleDateFormat`, e não `java.time`: o pacote só existe do Android 8 em
+ * diante, e estas maquininhas vão até o 7. O formato é fixo porque quem o
+ * escreve é o `toISOString()` do servidor, sempre com três casas e Z no fim.
+ *
+ * Data que não dá para ler devolve nulo em vez de quebrar a lista do salão:
+ * uma mesa sem o "há 3 min" ainda é uma mesa; uma tela que estourou, não.
+ */
+fun esperaDesde(iso: String, agoraEmMillis: Long = System.currentTimeMillis()): String? {
+    val formato = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
+    formato.timeZone = java.util.TimeZone.getTimeZone("UTC")
+    val quando = try {
+        formato.parse(iso)?.time ?: return null
+    } catch (e: java.text.ParseException) {
+        return null
+    }
+
+    val minutos = (agoraEmMillis - quando) / 60_000
+    // Relógio do aparelho atrasado em relação ao servidor daria "há -2 min".
+    if (minutos < 1) return "agora"
+    if (minutos < 60) return "há $minutos min"
+    val horas = minutos / 60
+    return "há ${horas}h${(minutos % 60).toString().padStart(2, '0')}"
+}

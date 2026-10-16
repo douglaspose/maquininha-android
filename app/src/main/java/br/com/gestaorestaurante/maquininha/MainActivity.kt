@@ -74,6 +74,7 @@ class MainActivity : ComponentActivity() {
                             abrirMesa = modelo::abrirMesa,
                             abrirConta = modelo::abrirConta,
                             abrirCardapio = modelo::abrirCardapio,
+                            atenderChamado = modelo::atenderChamado,
                             pedirAConta = modelo::pedirAConta,
                             reabrirConta = modelo::reabrirConta,
                             porNoCarrinho = modelo::porNoCarrinho,

@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -141,6 +142,22 @@ internal fun TelaDePin(painel: Painel, acoes: Acoes) {
  */
 @Composable
 internal fun TelaDeMesas(painel: Painel, acoes: Acoes) {
+    /*
+     * O salão se refaz sozinho enquanto está na tela.
+     *
+     * Sem isto, o chamado que o cliente faz pelo QR só aparecia quando alguém
+     * tocasse em "Atualizar" — e quem está de mão levantada não sabe que
+     * precisa que o garçom toque num botão. Meio minuto é o intervalo que
+     * mantém a espera curta sem conversar com o servidor à toa: o aparelho
+     * fica nesta tela a noite inteira.
+     */
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            acoes.atualizarMesas()
+        }
+    }
+
     Column(
         Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -256,6 +273,21 @@ private fun MesaNaLista(mesa: MesaAberta, aoTocar: () -> Unit) {
             verticalAlignment = Alignment.Top,
         ) {
             Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                /*
+                 * A mão levantada vem antes do nome da mesa, e colorida: é a
+                 * única linha do salão que pede uma decisão agora. Com a
+                 * espera escrita, porque é por ela que o garçom escolhe entre
+                 * duas mesas chamando.
+                 */
+                mesa.chamadoEm?.let { desde ->
+                    Text(
+                        listOfNotNull("CHAMANDO", esperaDesde(desde)).joinToString(" · "),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                    )
+                }
                 Text(
                     mesa.mesa ?: mesa.nomeCliente ?: "Comanda ${mesa.numero}",
                     fontSize = 18.sp,
@@ -451,6 +483,25 @@ internal fun TelaDaConta(painel: Painel, acoes: Acoes) {
                 Text("Cobrar outro valor", fontSize = 16.sp)
             }
         }
+        /*
+         * Atender fica acima de tudo, e só aparece com a mesa chamando: é a
+         * razão de o garçom ter aberto esta conta, e some assim que ele toca.
+         */
+        conta.chamadoEm?.let { desde ->
+            Button(
+                onClick = acoes.atenderChamado,
+                enabled = !painel.buscando,
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Text(
+                    listOfNotNull("Atender chamado", esperaDesde(desde)).joinToString(" · "),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+
         /*
          * "A conta, por favor" dita ao garçom que está na mesa: daqui sai o
          * fechamento, que acende a mesa no mapa do salão, e a folha que o

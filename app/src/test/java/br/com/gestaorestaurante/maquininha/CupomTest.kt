@@ -3,6 +3,7 @@ package br.com.gestaorestaurante.maquininha
 import br.com.gestaorestaurante.maquininha.impressao.lerConteudoDaFila
 import br.com.gestaorestaurante.maquininha.impressao.paraLargura
 import br.com.gestaorestaurante.maquininha.ui.emReais
+import br.com.gestaorestaurante.maquininha.ui.esperaDesde
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -103,5 +104,43 @@ class CupomTest {
         assertEquals("R$ -22,94", emReais(-2294))
         assertEquals("R$ -1.234,56", emReais(-123456))
         assertEquals("R$ -0,05", emReais(-5))
+    }
+
+    /**
+     * A espera da mesa, que é o que o garçom lê para decidir aonde vai antes.
+     * O relógio é fixo nos testes: "há 3 min" medido contra o agora de verdade
+     * passaria hoje e falharia na virada do minuto.
+     */
+    @Test
+    fun `a espera sai em palavras curtas`() {
+        val agora = instante("2026-10-16T20:00:00.000Z")
+        assertEquals("agora", esperaDesde("2026-10-16T19:59:30.000Z", agora))
+        assertEquals("há 3 min", esperaDesde("2026-10-16T19:57:00.000Z", agora))
+        assertEquals("há 59 min", esperaDesde("2026-10-16T19:01:00.000Z", agora))
+        assertEquals("há 1h12", esperaDesde("2026-10-16T18:48:00.000Z", agora))
+        assertEquals("há 2h05", esperaDesde("2026-10-16T17:55:00.000Z", agora))
+    }
+
+    /** Relógio do aparelho atrasado em relação ao do servidor daria "há -2 min". */
+    @Test
+    fun `instante no futuro vira agora`() {
+        val agora = instante("2026-10-16T20:00:00.000Z")
+        assertEquals("agora", esperaDesde("2026-10-16T20:02:00.000Z", agora))
+    }
+
+    /**
+     * Uma mesa sem o "há 3 min" ainda é uma mesa; uma lista do salão que
+     * estourou ao desenhar, não.
+     */
+    @Test
+    fun `data ilegivel nao derruba a lista do salao`() {
+        assertEquals(null, esperaDesde("ontem à noite"))
+        assertEquals(null, esperaDesde(""))
+    }
+
+    private fun instante(iso: String): Long {
+        val formato = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
+        formato.timeZone = java.util.TimeZone.getTimeZone("UTC")
+        return formato.parse(iso)!!.time
     }
 }

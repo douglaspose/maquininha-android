@@ -436,6 +436,28 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         }
     }
 
+    /**
+     * Alguém foi até a mesa: apaga o selo do chamado.
+     *
+     * Some da lista do salão — daqui e do tablet do balcão, que recebe o aviso
+     * no mesmo instante. É o que impede dois garçons de irem à mesma mesa.
+     */
+    fun atenderChamado() {
+        val comandaId = _painel.value.comandaId ?: return
+        viewModelScope.launch {
+            _painel.update { it.copy(buscando = true, aviso = null) }
+            try {
+                api.atenderChamado(comandaId)
+                carregarConta(comandaId)
+                buscarMesas()
+            } catch (e: Exception) {
+                _painel.update {
+                    it.copy(buscando = false, aviso = e.message ?: "Não foi possível atender.")
+                }
+            }
+        }
+    }
+
     /** "Traz mais uma cerveja" depois de pedir a conta. */
     fun reabrirConta() {
         val comandaId = _painel.value.comandaId ?: return

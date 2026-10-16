@@ -194,6 +194,12 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
             json.decodeFromString(RespostaDaConferencia.serializer(), it)
         }
 
+    /** Alguém foi até a mesa: o selo do chamado apaga. */
+    suspend fun atenderChamado(comandaId: String): RespostaDoAtendimento =
+        chamar("/api/maquininha/comandas/$comandaId/atender", "{}", comOperador = true) {
+            json.decodeFromString(RespostaDoAtendimento.serializer(), it)
+        }
+
     /** "Traz mais uma cerveja": a conta volta a aceitar item. */
     suspend fun reabrirConta(comandaId: String): RespostaDaReabertura =
         chamar("/api/maquininha/comandas/$comandaId/reabrir", "{}", comOperador = true) {
