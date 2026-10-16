@@ -43,6 +43,15 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
     class FalhaNaApi(mensagem: String, causa: Throwable? = null) : IOException(mensagem, causa)
 
     /**
+     * O servidor mandou pedir a liberação de quem pode — não é recusa.
+     *
+     * Tem nome próprio porque a tela faz coisas opostas nos dois casos: numa
+     * recusa ela mostra o vermelho e para; aqui ela abre o teclado para o
+     * gerente digitar o PIN dele e segue de onde parou.
+     */
+    class PrecisaDeLiberacao(val tipo: String, mensagem: String) : IOException(mensagem)
+
+    /**
      * A chamada precisava de um turno aberto e não tinha.
      *
      * [recusadoPeloServidor] separa duas coisas que pareciam uma só:
@@ -89,6 +98,19 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
                     } catch (e: Exception) {
                         ""
                     }
+                    // 403 com um tipo de autorização não é "você não pode":
+                    // é "peça a quem pode", e a tela sabe o que fazer com isso.
+                    val liberacao = try {
+                        json.decodeFromString(ErroDoServidor.serializer(), texto).precisaAutorizacao
+                    } catch (e: Exception) {
+                        null
+                    }
+                    if (resposta.code == 403 && liberacao != null) {
+                        throw PrecisaDeLiberacao(
+                            liberacao,
+                            doServidor.ifBlank { "Esta ação precisa de autorização." },
+                        )
+                    }
                     // 401 tem nome próprio: numa chamada de operador é o turno
                     // que venceu; nas outras, é o token do aparelho.
                     if (resposta.code == 401) {
@@ -105,6 +127,8 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
                 leitura(texto)
             }
         } catch (e: FalhaNaApi) {
+            throw e
+        } catch (e: PrecisaDeLiberacao) {
             throw e
         } catch (e: PrecisaDoPin) {
             throw e
@@ -204,6 +228,42 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
         val corpo = json.encodeToString(MesaDeDestino.serializer(), MesaDeDestino(mesaDestinoId))
         return chamar("/api/maquininha/comandas/$comandaId/transferir", corpo, comOperador = true) {
             json.decodeFromString(RespostaDaTransferencia.serializer(), it)
+        }
+    }
+
+    /**
+     * Tira um item da conta.
+     *
+     * Quem não tem a permissão recebe `PrecisaDeLiberacao` em vez de recusa: a
+     * tela pede o PIN de quem pode e repete a chamada com a liberação.
+     */
+    suspend fun cancelarItem(
+        itemId: String,
+        motivo: String,
+        autorizacaoId: String? = null,
+    ): RespostaSimples {
+        val corpo = json.encodeToString(
+            CancelamentoDeItem.serializer(),
+            CancelamentoDeItem(motivo, autorizacaoId),
+        )
+        return chamar("/api/maquininha/itens/$itemId/cancelar", corpo, comOperador = true) {
+            json.decodeFromString(RespostaSimples.serializer(), it)
+        }
+    }
+
+    /**
+     * O gerente libera com o PIN dele, no aparelho que está na mão do garçom.
+     *
+     * PIN errado não é exceção: volta `ok = false` com o motivo pronto para a
+     * tela. Tratar como falha mandaria o garçom embora da tela do item.
+     */
+    suspend fun pedirLiberacao(tipo: String, referenciaId: String, pin: String): RespostaDaLiberacao {
+        val corpo = json.encodeToString(
+            PedidoDeLiberacao.serializer(),
+            PedidoDeLiberacao(tipo, referenciaId, pin),
+        )
+        return chamar("/api/maquininha/autorizacoes", corpo, comOperador = true) {
+            json.decodeFromString(RespostaDaLiberacao.serializer(), it)
         }
     }
 

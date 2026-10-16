@@ -395,13 +395,39 @@ internal fun TelaDaConta(painel: Painel, acoes: Acoes) {
         ) {
             LazyColumn(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                 items(conta.itens) { item ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                    /*
+                     * A linha é tocável: é o caminho para tirar o prato da
+                     * conta. Sem indicação nenhuma seria um toque secreto, e
+                     * com um botão por linha a conta de uma mesa cheia viraria
+                     * uma coluna de botões — por isso o "×" discreto à direita,
+                     * que só aparece onde o toque leva a algum lugar.
+                     */
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .then(
+                                if (painel.podeCancelar) {
+                                    Modifier.clickable { acoes.irParaCancelamento(item) }
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .padding(vertical = 3.dp)
+                    ) {
                         Text(
                             "${quantidade(item.quantidade)}x ${item.titulo}",
                             fontSize = 14.sp,
                             modifier = Modifier.weight(1f),
                         )
                         Text(emReais(item.totalEmCentavos), fontSize = 14.sp)
+                        // O sinal de que a linha leva a algum lugar. Discreto
+                        // de propósito: o que o garçom lê nesta tela é a conta.
+                        if (painel.podeCancelar) {
+                            Text(
+                                " ×",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
                 item {
@@ -1020,7 +1046,3 @@ internal fun Aviso(texto: String, cor: Color) {
         Text(texto, fontSize = 13.sp, color = cor, modifier = Modifier.padding(12.dp))
     }
 }
-
-/** 1.0 vira "1"; 0,5 continua "0,5" — a cozinha lança meia porção. */
-private fun quantidade(q: Double): String =
-    if (q == q.toLong().toDouble()) q.toLong().toString() else q.toString().replace('.', ',')

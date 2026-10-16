@@ -53,3 +53,13 @@ fun esperaDesde(iso: String, agoraEmMillis: Long = System.currentTimeMillis()): 
     val horas = minutos / 60
     return "há ${horas}h${(minutos % 60).toString().padStart(2, '0')}"
 }
+
+/**
+ * 1.0 vira "1"; 0,5 continua "0,5" — a cozinha lança meia porção.
+ *
+ * Estava escondida na tela do salão; veio para cá quando a tela do
+ * cancelamento precisou dela, que é o lugar dela desde o começo: é formato, e
+ * dá para conferir sem emulador.
+ */
+fun quantidade(q: Double): String =
+    if (q == q.toLong().toDouble()) q.toLong().toString() else q.toString().replace('.', ',')

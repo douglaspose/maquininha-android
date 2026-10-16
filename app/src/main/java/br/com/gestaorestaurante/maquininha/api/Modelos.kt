@@ -90,6 +90,12 @@ data class RespostaDeMesas(
     val podePedirConta: Boolean = false,
     /** O operador pode mudar a conta de mesa; sem isso, o botão nem aparece. */
     val podeTransferir: Boolean = false,
+    /**
+     * O operador pode pedir o cancelamento de um item — pedir, não
+     * necessariamente conseguir sozinho: sem a permissão, o servidor manda
+     * buscar o PIN de quem a tem.
+     */
+    val podeCancelar: Boolean = false,
     /** As mesas sem conta aberta, para o garçom que recebe quem acabou de sentar. */
     val livres: List<MesaLivre> = emptyList(),
     /** A casa exige o nome do cliente para abrir — o aparelho pergunta antes. */
@@ -208,6 +214,8 @@ data class ContaDaMesa(
 
 @Serializable
 data class ItemDaConta(
+    /** Sem ele a linha é só leitura: é o id que permite cancelá-la. */
+    val itemId: String = "",
     val titulo: String = "",
     val quantidade: Double = 1.0,
     val totalEmCentavos: Long = 0,
@@ -251,7 +259,43 @@ data class RespostaDoPagamento(
 
 /** O corpo de erro do servidor: uma frase pronta para a tela. */
 @Serializable
-data class ErroDoServidor(val erro: String = "")
+data class ErroDoServidor(
+    val erro: String = "",
+    /**
+     * O servidor não recusou: mandou pedir a liberação de quem pode. Vem no
+     * 403 de ações que o cargo do operador não alcança sozinho.
+     */
+    val precisaAutorizacao: String? = null,
+)
+
+/** O que a maquininha manda para liberar uma ação com o PIN de quem pode. */
+@Serializable
+data class PedidoDeLiberacao(
+    val tipo: String,
+    val referenciaId: String,
+    val pin: String,
+    val motivo: String? = null,
+)
+
+@Serializable
+data class RespostaDaLiberacao(
+    val ok: Boolean = false,
+    val autorizacaoId: String = "",
+    val aprovador: String = "",
+    /** Por que não liberou: PIN errado, sem a permissão, ou freio de tentativas. */
+    val motivo: String = "",
+)
+
+/** Resposta de quem só precisa dizer que deu certo. */
+@Serializable
+data class RespostaSimples(val ok: Boolean = false)
+
+/** O que a maquininha manda para tirar um item da conta. */
+@Serializable
+data class CancelamentoDeItem(
+    val motivo: String,
+    val autorizacaoId: String? = null,
+)
 
 // --- Cardápio e lançamento de itens ---
 

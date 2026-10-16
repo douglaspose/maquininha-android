@@ -7,6 +7,7 @@ import br.com.gestaorestaurante.maquininha.PlataformaAtual
 import br.com.gestaorestaurante.maquininha.api.Api
 import br.com.gestaorestaurante.maquininha.api.CategoriaDoCardapio
 import br.com.gestaorestaurante.maquininha.api.ContaDaMesa
+import br.com.gestaorestaurante.maquininha.api.ItemDaConta
 import br.com.gestaorestaurante.maquininha.api.ItemDoCardapio
 import br.com.gestaorestaurante.maquininha.api.EscolhaParaLancar
 import br.com.gestaorestaurante.maquininha.api.ItemParaLancar
@@ -76,6 +77,9 @@ sealed interface EstadoDaTela {
      */
     data object EscolhendoDestino : EstadoDaTela
 
+    /** Tirar um item da conta: o motivo, e o PIN de quem pode, se precisar. */
+    data object Cancelando : EstadoDaTela
+
     /** O teclado do valor. Vem de uma conta, ou da cobrança avulsa. */
     data object Parada : EstadoDaTela
     data class Cobrando(val mensagem: String) : EstadoDaTela
@@ -110,10 +114,19 @@ data class Painel(
     val podePedirConta: Boolean = false,
     /** Sem a permissão de transferir, a tela não oferece mudar de mesa. */
     val podeTransferir: Boolean = false,
+    /** Sem isto, as linhas da conta não são tocáveis: não há o que fazer com elas. */
+    val podeCancelar: Boolean = false,
     /** A casa exige o nome do cliente: o campo aparece e a abertura o cobra. */
     val exigeNomeCliente: Boolean = false,
     /** A mesa que está sendo aberta, entre escolher o número e confirmar. */
     val mesaParaAbrir: MesaLivre? = null,
+    /** O item que está sendo cancelado, enquanto a tela do motivo está aberta. */
+    val itemParaCancelar: ItemDaConta? = null,
+    /**
+     * O servidor pediu a liberação de quem pode cancelar: a tela troca o
+     * motivo pelo teclado do PIN. Não é erro, e por isso não é `aviso`.
+     */
+    val pedindoLiberacao: Boolean = false,
     val caixaAberto: Boolean = true,
     val buscando: Boolean = false,
     val conta: ContaDaMesa? = null,
@@ -292,6 +305,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                     podeReceber = resposta.podeReceber,
                     podePedirConta = resposta.podePedirConta,
                     podeTransferir = resposta.podeTransferir,
+                    podeCancelar = resposta.podeCancelar,
                     exigeNomeCliente = resposta.exigeNomeCliente,
                     caixaAberto = resposta.caixaAberto,
                     buscando = false,
@@ -440,6 +454,78 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
             } catch (e: Exception) {
                 _painel.update {
                     it.copy(buscando = false, aviso = e.message ?: "Não foi possível pedir a conta.")
+                }
+            }
+        }
+    }
+
+    /** Abre a tela do motivo para tirar este item da conta. */
+    fun irParaCancelamento(item: ItemDaConta) {
+        _painel.update {
+            it.copy(
+                estado = EstadoDaTela.Cancelando,
+                itemParaCancelar = item,
+                pedindoLiberacao = false,
+                aviso = null,
+            )
+        }
+    }
+
+    /**
+     * Tira o item da conta.
+     *
+     * Quem não tem a permissão não é recusado: o servidor responde que precisa
+     * de liberação, e a tela troca o motivo pelo teclado do PIN sem perder o
+     * que o garçom já escreveu. É o gerente digitando no aparelho dele, de pé
+     * na mesa, em vez de os dois irem até o balcão.
+     */
+    fun cancelarItem(motivo: String, autorizacaoId: String? = null) {
+        val item = _painel.value.itemParaCancelar ?: return
+        viewModelScope.launch {
+            _painel.update { it.copy(buscando = true, aviso = null) }
+            try {
+                api.cancelarItem(item.itemId, motivo, autorizacaoId)
+                val comandaId = _painel.value.comandaId
+                _painel.update {
+                    it.copy(
+                        estado = EstadoDaTela.Conta,
+                        itemParaCancelar = null,
+                        pedindoLiberacao = false,
+                    )
+                }
+                if (comandaId != null) carregarConta(comandaId)
+                buscarMesas()
+                _painel.update { it.copy(buscando = false, recado = "Item cancelado.") }
+            } catch (e: Api.PrecisaDeLiberacao) {
+                _painel.update { it.copy(buscando = false, pedindoLiberacao = true, aviso = null) }
+            } catch (e: Exception) {
+                _painel.update {
+                    it.copy(buscando = false, aviso = e.message ?: "Não foi possível cancelar.")
+                }
+            }
+        }
+    }
+
+    /**
+     * O gerente digita o PIN dele e, liberado, o cancelamento segue na hora.
+     *
+     * A liberação vale para este item e por poucos minutos: não adianta guardar
+     * para o próximo, e é de propósito — o que o gerente autorizou foi isto.
+     */
+    fun liberarCancelamento(pin: String, motivo: String) {
+        val item = _painel.value.itemParaCancelar ?: return
+        viewModelScope.launch {
+            _painel.update { it.copy(buscando = true, aviso = null) }
+            try {
+                val r = api.pedirLiberacao("CANCELAMENTO_ITEM", item.itemId, pin)
+                if (!r.ok) {
+                    _painel.update { it.copy(buscando = false, aviso = r.motivo) }
+                    return@launch
+                }
+                cancelarItem(motivo, r.autorizacaoId)
+            } catch (e: Exception) {
+                _painel.update {
+                    it.copy(buscando = false, aviso = e.message ?: "Não foi possível liberar.")
                 }
             }
         }
@@ -681,6 +767,13 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                     it.copy(estado = EstadoDaTela.EscolhendoMesa, mesaParaAbrir = null)
                 // Escolher o destino volta para a conta, que é de onde se veio.
                 is EstadoDaTela.EscolhendoDestino -> it.copy(estado = EstadoDaTela.Conta)
+                is EstadoDaTela.Cancelando ->
+                    it.copy(
+                        estado = EstadoDaTela.Conta,
+                        itemParaCancelar = null,
+                        pedindoLiberacao = false,
+                        aviso = null,
+                    )
                 is EstadoDaTela.Parada ->
                     if (it.comandaId != null) {
                         it.copy(estado = EstadoDaTela.Conta, valorEmCentavos = 0)

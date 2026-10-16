@@ -40,6 +40,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import br.com.gestaorestaurante.maquininha.api.ItemDaConta
 import br.com.gestaorestaurante.maquininha.api.ItemDoCardapio
 import br.com.gestaorestaurante.maquininha.api.MesaLivre
 import br.com.gestaorestaurante.maquininha.api.OpcionalDoCardapio
@@ -65,6 +66,7 @@ fun Tela(painel: Painel, acoes: Acoes) {
         is EstadoDaTela.EscolhendoMesa -> TelaDeEscolhaDaMesa(painel, acoes)
         is EstadoDaTela.AbrindoMesa -> TelaDeAberturaDaMesa(painel, acoes)
         is EstadoDaTela.EscolhendoDestino -> TelaDeDestinoDaConta(painel, acoes)
+        is EstadoDaTela.Cancelando -> TelaDeCancelamento(painel, acoes)
         is EstadoDaTela.Cobrando ->
             TelaDeAndamento(painel.estado.mensagem, "Siga as instruções no visor")
         is EstadoDaTela.Terminada -> TelaDeResultado(painel, painel.estado, acoes)
@@ -89,6 +91,10 @@ class Acoes(
     val escolherMesaLivre: (MesaLivre) -> Unit,
     /** Pessoas e nome do cliente; o nome vai vazio onde a casa não o exige. */
     val abrirMesa: (Int, String) -> Unit,
+    val irParaCancelamento: (ItemDaConta) -> Unit,
+    /** O motivo, e a liberação quando o cargo não alcança sozinho. */
+    val cancelarItem: (String, String?) -> Unit,
+    val liberarCancelamento: (String, String) -> Unit,
     val irParaTransferencia: () -> Unit,
     val transferirPara: (MesaLivre) -> Unit,
     val abrirConta: (String) -> Unit,
