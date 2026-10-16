@@ -145,10 +145,16 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
      * antigo ignora o parâmetro e devolve 48 como sempre.
      */
     suspend fun buscarFilaDeImpressao(colunas: Int): RespostaDaFila =
-        // O apelido vai junto para a fila saber quem levou cada papel: ela
-        // entrega cada trabalho a um agente só, e a tela de impressão mostra
-        // qual aparelho está puxando.
-        chamar("/api/impressao?colunas=$colunas&agente=${configuracao.agente()}") {
+        // Duas coisas vão junto na busca:
+        //
+        //  - o apelido, para a fila saber quem levou cada papel — ela entrega
+        //    cada trabalho a um agente só, e a tela de impressão mostra qual
+        //    aparelho está puxando;
+        //  - `embutida`, porque este aparelho imprime na bobina da mão e em
+        //    mais lugar nenhum. Sem isso ele levaria a comanda endereçada à
+        //    térmica da cozinha, e a praça ficaria sem o papel: ele sairia no
+        //    bolso do garçom.
+        chamar("/api/impressao?colunas=$colunas&embutida=1&agente=${configuracao.agente()}") {
             json.decodeFromString(RespostaDaFila.serializer(), it)
         }
             .also { if (it.unidade.isNotBlank()) configuracao.guardarUnidade(it.unidade) }
