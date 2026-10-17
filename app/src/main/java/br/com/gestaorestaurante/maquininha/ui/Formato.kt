@@ -37,11 +37,29 @@ fun emReais(centavos: Long): String {
  * Data que não dá para ler devolve nulo em vez de quebrar a lista do salão:
  * uma mesa sem o "há 3 min" ainda é uma mesa; uma tela que estourou, não.
  */
+/**
+ * Um formatador por thread, e não um por chamada.
+ *
+ * `esperaDesde` é chamada uma vez por mesa a cada redesenho do salão — e o
+ * salão se redesenha sozinho a cada ronda. Construir um `SimpleDateFormat`
+ * ali dentro significa, numa casa de quarenta mesas, quarenta objetos por
+ * redesenho, cada um montando o calendário e o fuso.
+ *
+ * Por thread, e não um só compartilhado, porque `SimpleDateFormat` guarda
+ * estado interno enquanto analisa: duas threads no mesmo objeto devolvem data
+ * trocada ou estouram, e o que sai disso é uma espera errada na tela do garçom
+ * — ou a lista do salão inteira sem os minutos.
+ */
+private val FORMATO_ISO = object : ThreadLocal<java.text.SimpleDateFormat>() {
+    override fun initialValue() =
+        java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }
+}
+
 fun esperaDesde(iso: String, agoraEmMillis: Long = System.currentTimeMillis()): String? {
-    val formato = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
-    formato.timeZone = java.util.TimeZone.getTimeZone("UTC")
     val quando = try {
-        formato.parse(iso)?.time ?: return null
+        FORMATO_ISO.get()!!.parse(iso)?.time ?: return null
     } catch (e: java.text.ParseException) {
         return null
     }

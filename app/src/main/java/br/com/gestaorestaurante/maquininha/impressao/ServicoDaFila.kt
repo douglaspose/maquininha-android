@@ -169,7 +169,21 @@ class ServicoDaFila : LifecycleService() {
         )
         .build()
 
+    /** O último texto que foi para a barra, para não repetir o mesmo. */
+    private var naBarra = "Aguardando pedidos"
+
+    /*
+     * Só notifica quando muda.
+     *
+     * O laço roda a cada três segundos e quase sempre com a mesma frase —
+     * "Aguardando pedidos" a noite inteira. Cada `notify` é uma ida ao
+     * sistema e um desenho na barra: vinte mil por noite para dizer a mesma
+     * coisa, num aparelho que passa o turno na tomada mas vai para a mão do
+     * garçom quando o salão enche.
+     */
     private fun atualizarNotificacao(texto: String) {
+        if (texto == naBarra) return
+        naBarra = texto
         getSystemService(NotificationManager::class.java)
             .notify(NOTIFICACAO, notificacao(texto))
     }
