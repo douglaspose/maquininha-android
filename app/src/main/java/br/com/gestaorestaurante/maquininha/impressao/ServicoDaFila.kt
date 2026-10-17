@@ -40,7 +40,22 @@ class ServicoDaFila : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
         criarCanal()
-        startForeground(NOTIFICACAO, notificacao("Aguardando pedidos"))
+        /*
+         * Recusado pelo sistema é desistir, não cair.
+         *
+         * Cada versão do Android aperta um pouco mais quem pode subir em
+         * primeiro plano e de onde. Sem este cinto, uma regra nova vira laço
+         * de falha no boot — o serviço nasce, o sistema recusa, o aplicativo
+         * cai, o START_STICKY traz de volta —, e foi exatamente isso que o
+         * Android 15 fez com o tipo `dataSync`.
+         */
+        try {
+            startForeground(NOTIFICACAO, notificacao("Aguardando pedidos"))
+        } catch (e: Exception) {
+            Log.w("Maquininha", "o sistema não deixou a fila subir agora: ${e.message}", e)
+            stopSelf()
+            return
+        }
         lifecycleScope.launch { laco() }
     }
 
@@ -54,30 +69,51 @@ class ServicoDaFila : LifecycleService() {
         while (lifecycleScope.isActive) {
             val descanso = try {
                 val resposta = api.buscarFilaDeImpressao(impressora.colunas)
-                for (trabalho in resposta.trabalhos) {
-                    val marca = resposta.marca
-                        ?.takeIf { trabalho.comMarca }
-                        ?.let { escposParaMarca(it.escpos) }
-                    val cupom = lerConteudoDaFila(trabalho.titulo, trabalho.conteudo, marca)
-                        /*
-                         * Estreitar aqui só quando o servidor não estreitou.
-                         *
-                         * Ele agora monta o papel na largura pedida, e o que
-                         * vem assim já está certo — reflui-lo de novo só
-                         * estragaria. O adaptador fica para o servidor antigo,
-                         * que ignora o parâmetro e responde em 48.
-                         */
-                        .let { if (resposta.colunas == impressora.colunas) it else it.paraLargura(impressora.colunas) }
-                    val falha = impressora.imprimir(cupom)
-                    api.confirmarImpressao(trabalho.id, ok = falha == null, erro = falha)
-                }
-                atualizarNotificacao(
-                    if (resposta.trabalhos.isEmpty()) "Aguardando pedidos"
-                    else "${resposta.trabalhos.size} impressos"
+                val lote = LoteDeImpressao(
+                    montar = { trabalho ->
+                        val marca = resposta.marca
+                            ?.takeIf { trabalho.comMarca }
+                            ?.let { escposParaMarca(it.escpos) }
+                        lerConteudoDaFila(trabalho.titulo, trabalho.conteudo, marca)
+                            /*
+                             * Estreitar aqui só quando o servidor não
+                             * estreitou.
+                             *
+                             * Ele agora monta o papel na largura pedida, e o
+                             * que vem assim já está certo — reflui-lo de novo
+                             * só estragaria. O adaptador fica para o servidor
+                             * antigo, que ignora o parâmetro e responde em 48.
+                             */
+                            .let {
+                                if (resposta.colunas == impressora.colunas) it
+                                else it.paraLargura(impressora.colunas)
+                            }
+                    },
+                    imprimir = { cupom -> impressora.imprimir(cupom) },
+                    confirmar = { id, ok, erro -> api.confirmarImpressao(id, ok = ok, erro = erro) },
                 )
-                // Fila cheia: volta já, porque o servidor entrega no máximo 20
-                // por vez e pode haver mais esperando.
-                if (resposta.trabalhos.size >= 20) 200L else INTERVALO
+                val feito = lote.rodar(resposta.trabalhos)
+
+                atualizarNotificacao(
+                    when {
+                        resposta.trabalhos.isEmpty() -> "Aguardando pedidos"
+                        // O erro aparece na notificação: papel que não saiu é
+                        // comanda que a cozinha não viu, e alguém no salão
+                        // precisa ir olhar a impressora.
+                        feito.comErro > 0 -> "${feito.impressos} impressos, ${feito.comErro} com erro"
+                        else -> "${feito.impressos} impressos"
+                    }
+                )
+
+                when {
+                    // A rede caiu no meio do lote: espera como se o servidor
+                    // tivesse sumido, que foi o que aconteceu.
+                    feito.interrompido -> INTERVALO * 4
+                    // Fila cheia: volta já, porque o servidor entrega no
+                    // máximo 20 por vez e pode haver mais esperando.
+                    resposta.trabalhos.size >= 20 -> 200L
+                    else -> INTERVALO
+                }
             } catch (e: Exception) {
                 /*
                  * A notificação cabe uma linha; o logcat cabe a causa. Sem

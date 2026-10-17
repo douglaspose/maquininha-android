@@ -4,8 +4,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+        Para a fila de impressão voltar sozinha quando a maquininha liga: ela
+        fica na tomada do balcão com a tela apagada, e sem isto a cozinha
+        parava de receber comanda até alguém abrir o aplicativo.
+    -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="false"
@@ -27,13 +33,43 @@
         </activity>
 
         <!--
-            dataSync: o serviço existe para buscar trabalho no servidor e
-            imprimir. É o tipo que o Android 14 exige declarado, e é o que
-            descreve o que ele faz de verdade.
+            specialUse, e não dataSync.
+
+            O serviço busca trabalho no servidor e imprime, que é o que
+            `dataSync` descreve — mas o Android 15 pôs duas regras nesse tipo
+            que não cabem numa maquininha de salão: teto de cerca de seis horas
+            por dia (o aparelho fica ligado a noite inteira) e proibição de
+            subir a partir do boot, que é justamente quando a cozinha mais
+            precisa dele. Com `dataSync`, o aparelho reiniciado entrava em
+            laço de falha: o serviço nascia, o sistema recusava e o aplicativo
+            caía, de novo e de novo.
+
+            A impressão da comanda é o "uso especial" desta casa: o aparelho é
+            a impressora da cozinha, não um aplicativo sincronizando dados em
+            segundo plano.
         -->
         <service
             android:name=".impressao.ServicoDaFila"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="agente de impressão da unidade: busca a fila do servidor e imprime as comandas na térmica do aparelho" />
+        </service>
+
+        <!--
+            Receber BOOT_COMPLETED é o que permite subir o serviço em primeiro
+            plano a partir do segundo plano — o Android abre essa exceção
+            justamente para quem precisa voltar com o aparelho.
+        -->
+        <receiver
+            android:name=".impressao.AoLigarOAparelho"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

@@ -123,6 +123,16 @@ class ImpressoraSimulada : Impressora {
 
     override suspend fun imprimir(cupom: Cupom): String? {
         delay(400)
+        /*
+         * Papel com "ESTOURA" no título derruba a impressora, em vez de sair.
+         *
+         * É o irmão do R$ 6,66 da cobrança: serve para provar na bancada que
+         * um trabalho ruim sai da fila sozinho em vez de travar a cozinha
+         * inteira atrás dele. Só existe neste flavor.
+         */
+        if (cupom.titulo.contains("ESTOURA")) {
+            throw IllegalStateException("impressora travou no papel (bancada)")
+        }
         Log.i(ETIQUETA, "--- " + cupom.titulo + " ---")
         if (cupom.marca != null) {
             Log.i(ETIQUETA, "[logomarca " + cupom.marca.largura + "x" + cupom.marca.altura + "]")
