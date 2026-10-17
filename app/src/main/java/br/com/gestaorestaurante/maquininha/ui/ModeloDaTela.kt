@@ -383,6 +383,17 @@ data class LinhaDoCarrinho(
      * item, o garçom lança em rodadas separadas.
      */
     val observacao: String? = null,
+    /**
+     * Esta linha já foi mandada ao servidor, e por isso não muda mais.
+     *
+     * O id da linha é a referência que o servidor usa para reconhecer o
+     * reenvio — e ele conhece a linha pelo que recebeu. Mudar a quantidade
+     * depois de mandar era pedir a mesma referência valendo outra coisa: o
+     * servidor reconhecia o id, ignorava o resto, e a segunda picanha sumia
+     * entre a tela e a cozinha. Depois de mandada, a linha é só leitura — mais
+     * uma unidade abre linha nova, com referência nova.
+     */
+    val enviada: Boolean = false,
 ) {
     /**
      * O que esta linha custa, com os adicionais somados ao item.
@@ -902,7 +913,22 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         if (painel.carrinho.isEmpty() || painel.buscando) return
 
         viewModelScope.launch {
-            _painel.update { it.copy(buscando = true, aviso = null) }
+            /*
+             * O que vai agora fica selado antes de a chamada começar.
+             *
+             * Não é só para o caso de falhar: o garçom continua tocando no
+             * cardápio enquanto a rodada viaja, e o que ele acrescentar nesse
+             * meio tempo não entrou nesta chamada. Selado, o toque abre linha
+             * nova — que sobrevive à limpeza do sucesso e vai na rodada
+             * seguinte, em vez de ser apagada sem nunca ter sido mandada.
+             */
+            _painel.update {
+                it.copy(
+                    buscando = true,
+                    aviso = null,
+                    carrinho = it.carrinho.map { linha -> linha.copy(enviada = true) },
+                )
+            }
             try {
                 api.lancarRodada(
                     comandaId,
@@ -927,7 +953,11 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                         },
                     ),
                 )
-                _painel.update { it.copy(carrinho = emptyList(), buscando = false) }
+                // Só o que foi mandado sai do carrinho: o que o garçom
+                // acrescentou durante a viagem fica para a próxima rodada.
+                _painel.update {
+                    it.copy(carrinho = it.carrinho.filterNot { linha -> linha.enviada }, buscando = false)
+                }
                 abrirConta(comandaId)
             } catch (e: Exception) {
                 /*

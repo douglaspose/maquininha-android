@@ -24,6 +24,12 @@ import br.com.gestaorestaurante.maquininha.api.OpcionalDoCardapio
  *
  * Linha com observação nunca recebe mais um: o "+" não tem como saber se o
  * recado vale para a unidade nova. Ela abre linha própria.
+ *
+ * Linha já mandada ao servidor também não: o id dela é a referência que o
+ * servidor usa para reconhecer o reenvio, e somar nela faria a mesma
+ * referência valer outra quantidade — o servidor reconheceria o id, ignoraria
+ * o resto, e a unidade nova sumiria entre a tela e a cozinha. Ela abre linha
+ * nova, com referência nova.
  */
 fun porNaRodada(
     rodada: List<LinhaDoCarrinho>,
@@ -37,7 +43,8 @@ fun porNaRodada(
 
     val escolhidos = escolhas.map { it.opcionalId }.toSet()
     val existente = rodada.find {
-        it.item.cardapioItemId == item.cardapioItemId &&
+        !it.enviada &&
+            it.item.cardapioItemId == item.cardapioItemId &&
             it.observacao == null &&
             it.escolhas.map { e -> e.opcionalId }.toSet() == escolhidos
     }
@@ -54,10 +61,19 @@ fun porNaRodada(
     }
 }
 
-/** Menos um nesta linha. Chegando a zero, a linha sai da rodada. */
+/**
+ * Menos um nesta linha. Chegando a zero, a linha sai da rodada.
+ *
+ * Linha já mandada não diminui: ela pode estar na cozinha neste instante, e
+ * tirá-la daqui só a esconderia do garçom — o caminho de desfazer o que já foi
+ * lançado é cancelar o item na conta, que pede motivo e, conforme o cargo,
+ * quem autorize.
+ */
 fun tirarDaRodada(rodada: List<LinhaDoCarrinho>, linhaId: String): List<LinhaDoCarrinho> =
     rodada
-        .map { if (it.id == linhaId) it.copy(quantidade = it.quantidade - 1) else it }
+        .map {
+            if (it.id == linhaId && !it.enviada) it.copy(quantidade = it.quantidade - 1) else it
+        }
         .filter { it.quantidade > 0 }
 
 /**
@@ -67,6 +83,9 @@ fun tirarDaRodada(rodada: List<LinhaDoCarrinho>, linhaId: String): List<LinhaDoC
  * nenhuma outra, e o garçom não entende por que dois chopes aparecem separados
  * na conta. O corte em 200 é o mesmo do servidor, feito aqui para o garçom
  * perceber o limite enquanto escreve.
+ *
+ * Linha já mandada não muda: o papel da cozinha saiu com o que foi mandado, e
+ * reescrever aqui só trocaria o que o garçom lê, não o que a cozinha leu.
  */
 fun anotarNaRodada(
     rodada: List<LinhaDoCarrinho>,
@@ -74,7 +93,9 @@ fun anotarNaRodada(
     texto: String,
 ): List<LinhaDoCarrinho> {
     val limpo = texto.trim().take(200).ifBlank { null }
-    return rodada.map { if (it.id == linhaId) it.copy(observacao = limpo) else it }
+    return rodada.map {
+        if (it.id == linhaId && !it.enviada) it.copy(observacao = limpo) else it
+    }
 }
 
 /**

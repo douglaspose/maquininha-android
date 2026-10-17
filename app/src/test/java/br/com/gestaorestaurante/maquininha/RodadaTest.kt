@@ -201,4 +201,88 @@ class RodadaTest {
         assertEquals(0, apagarCentavo(5))
         assertEquals(0, apagarCentavo(0))
     }
+// --- a linha que já foi mandada ---
+
+    /**
+     * O caso que sumia com o prato.
+     *
+     * O id da linha é a referência que o servidor usa para reconhecer o
+     * reenvio da maquininha. Somando na mesma linha depois de mandar, a mesma
+     * referência voltava valendo 2: o servidor reconhecia o id, ignorava o
+     * resto e a segunda picanha sumia entre a tela e a cozinha — com a tela
+     * limpando o carrinho como se tudo tivesse ido.
+     */
+    @Test
+    fun `mais um depois de mandada abre linha nova, nao soma na mandada`() {
+        val picanha = item("Picanha", 12990)
+        val mandada = porNaRodada(emptyList(), picanha, novoId = idPrevisivel)
+            .map { it.copy(enviada = true) }
+
+        val rodada = porNaRodada(mandada, picanha, novoId = idPrevisivel)
+
+        assertEquals(2, rodada.size)
+        // A mandada fica como foi mandada.
+        assertEquals(1, rodada[0].quantidade)
+        assertTrue(rodada[0].enviada)
+        // E a nova vale por si, com referência própria.
+        assertEquals(1, rodada[1].quantidade)
+        assertEquals(false, rodada[1].enviada)
+        assertTrue(rodada[0].id != rodada[1].id)
+    }
+
+    /** Duas unidades novas somam entre si: só a mandada é que fica de fora. */
+    @Test
+    fun `as novas continuam somando na mesma linha`() {
+        val picanha = item("Picanha", 12990)
+        val mandada = porNaRodada(emptyList(), picanha, novoId = idPrevisivel)
+            .map { it.copy(enviada = true) }
+
+        var rodada = porNaRodada(mandada, picanha, novoId = idPrevisivel)
+        rodada = porNaRodada(rodada, picanha, novoId = idPrevisivel)
+
+        assertEquals(2, rodada.size)
+        assertEquals(1, rodada[0].quantidade)
+        assertEquals(2, rodada[1].quantidade)
+    }
+
+    /**
+     * Ela pode estar na chapa neste instante. Tirá-la do carrinho só a
+     * esconderia do garçom: o caminho de desfazer o que já foi lançado é
+     * cancelar o item na conta, que pede motivo e quem autorize.
+     */
+    @Test
+    fun `linha mandada nao diminui nem some`() {
+        val picanha = item("Picanha", 12990)
+        val mandada = porNaRodada(emptyList(), picanha, novoId = idPrevisivel)
+            .map { it.copy(enviada = true) }
+
+        val rodada = tirarDaRodada(mandada, mandada[0].id)
+
+        assertEquals(1, rodada.size)
+        assertEquals(1, rodada[0].quantidade)
+    }
+
+    /** O papel da cozinha já saiu com o que foi mandado. */
+    @Test
+    fun `observacao nao muda em linha mandada`() {
+        val picanha = item("Picanha", 12990)
+        val mandada = porNaRodada(emptyList(), picanha, novoId = idPrevisivel)
+            .map { it.copy(enviada = true, observacao = "ao ponto") }
+
+        val rodada = anotarNaRodada(mandada, mandada[0].id, "mal passada")
+
+        assertEquals("ao ponto", rodada[0].observacao)
+    }
+
+    @Test
+    fun `a linha que ainda nao foi mandada continua aceitando observacao`() {
+        val picanha = item("Picanha", 12990)
+        val rodada = anotarNaRodada(
+            porNaRodada(emptyList(), picanha, novoId = idPrevisivel),
+            "linha-1",
+            "mal passada",
+        )
+
+        assertEquals("mal passada", rodada[0].observacao)
+    }
 }

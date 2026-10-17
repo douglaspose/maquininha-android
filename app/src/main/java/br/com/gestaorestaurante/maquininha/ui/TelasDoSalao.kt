@@ -986,18 +986,35 @@ private fun ItemNoCardapio(
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        TextButton(
-                            onClick = { aoAnotar(linha) },
-                            contentPadding = PaddingValues(0.dp),
-                            modifier = Modifier.heightIn(min = 26.dp),
-                        ) {
+                        /*
+                         * Linha já mandada não se edita: o que ela diz agora é
+                         * o que a cozinha recebeu. O "+ observação" e o "−"
+                         * dariam a impressão de que ainda dá para mexer, e o
+                         * servidor ignoraria a mudança em silêncio.
+                         */
+                        if (linha.enviada) {
                             Text(
-                                linha.observacao?.let { "“$it”" } ?: "+ observação",
+                                linha.observacao?.let { "“$it” · mandada" } ?: "mandada",
                                 fontSize = 12.sp,
-                                textAlign = TextAlign.Start,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = 2.dp),
                             )
+                        } else {
+                            TextButton(
+                                onClick = { aoAnotar(linha) },
+                                contentPadding = PaddingValues(0.dp),
+                                modifier = Modifier.heightIn(min = 26.dp),
+                            ) {
+                                Text(
+                                    linha.observacao?.let { "“$it”" } ?: "+ observação",
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.Start,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
                     }
                     Text(
@@ -1005,7 +1022,9 @@ private fun ItemNoCardapio(
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    TextButton(onClick = { aoTirar(linha.id) }) { Text("−", fontSize = 20.sp) }
+                    if (!linha.enviada) {
+                        TextButton(onClick = { aoTirar(linha.id) }) { Text("−", fontSize = 20.sp) }
+                    }
                 }
             }
         }
