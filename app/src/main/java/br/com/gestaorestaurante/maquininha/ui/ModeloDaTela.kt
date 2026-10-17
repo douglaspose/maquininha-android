@@ -16,11 +16,13 @@ import br.com.gestaorestaurante.maquininha.api.OpcionalDoCardapio
 import br.com.gestaorestaurante.maquininha.api.AberturaDeMesa
 import br.com.gestaorestaurante.maquininha.api.MesaAberta
 import br.com.gestaorestaurante.maquininha.api.MesaLivre
+import br.com.gestaorestaurante.maquininha.api.RespostaDeMesas
 import br.com.gestaorestaurante.maquininha.api.PagamentoParaEnviar
 import br.com.gestaorestaurante.maquininha.api.RodadaParaLancar
 import br.com.gestaorestaurante.maquininha.config.Configuracao
 import br.com.gestaorestaurante.maquininha.config.RepositorioDeConfiguracao
 import br.com.gestaorestaurante.maquininha.impressao.ServicoDaFila
+import br.com.gestaorestaurante.maquininha.impressao.ImpressoraDaCasa
 import br.com.gestaorestaurante.maquininha.impressao.lerConteudoDaFila
 import br.com.gestaorestaurante.maquininha.impressao.paraLargura
 import br.com.gestaorestaurante.maquininha.pagamento.AndamentoDaCobranca
@@ -267,6 +269,58 @@ data class Painel(
         get() = carrinho.sumOf { it.precoDaLinhaEmCentavos }
 
     /**
+     * O salão respondeu.
+     *
+     * `deFundo` é a ronda de trinta segundos e as atualizações que vêm de
+     * carona em outra ação — ninguém pediu, então elas não escrevem na tela de
+     * quem está trabalhando: trocam os dados do salão e ficam caladas. Só quem
+     * está olhando o salão é que vê o "carregando" sumir e o aviso limpar.
+     *
+     * Sem isto, a ronda que falhava punha banner vermelho no meio da conta, do
+     * cardápio e do cancelamento — e a que dava certo apagava o erro de uma
+     * operação de verdade, que o garçom ainda nem tinha lido.
+     */
+    fun comOSalao(resposta: RespostaDeMesas, deFundo: Boolean): Painel {
+        val comDados = copy(
+            mesas = resposta.mesas,
+            livres = resposta.livres,
+            podeAbrir = resposta.podeAbrir,
+            podeReceber = resposta.podeReceber,
+            podePedirConta = resposta.podePedirConta,
+            podeTransferir = resposta.podeTransferir,
+            podeCancelar = resposta.podeCancelar,
+            exigeNomeCliente = resposta.exigeNomeCliente,
+            caixaAberto = resposta.caixaAberto,
+        )
+        return if (deFundo && estado !is EstadoDaTela.Mesas) comDados
+        else comDados.copy(buscando = false, aviso = null)
+    }
+
+    /** O salão não respondeu. A ronda cala; o toque em "Atualizar" avisa. */
+    fun semOSalao(aviso: String?, deFundo: Boolean): Painel =
+        if (deFundo && estado !is EstadoDaTela.Mesas) this
+        else copy(buscando = false, aviso = aviso)
+
+    /**
+     * O turno fechou: o que era do operador sai da memória do aparelho.
+     *
+     * Ficava tudo para trás — a conta aberta, o carrinho montado, o cardápio,
+     * o último recado —, e o operador seguinte digitava o PIN dele e caía numa
+     * tela com o rastro do anterior. O que fica é o que é do aparelho: a
+     * configuração, a credenciadora e os pagamentos que ainda não saíram.
+     */
+    fun semOTurno(): Painel = Painel(
+        configuracao = configuracao,
+        credenciadora = credenciadora,
+        provedorPronto = provedorPronto,
+        motivoDoProvedor = motivoDoProvedor,
+        pendentesDeEnvio = pendentesDeEnvio,
+        estado = EstadoDaTela.PedindoPin,
+        // Derruba a vez: busca de conta no ar não volta na tela do próximo.
+        vezDaConta = vezDaConta + 1,
+    )
+
+    /**
      * Sem turno aberto não se cobra: o PIN primeiro.
      *
      * O turno não é burocracia — é o nome que vai no pagamento e no caixa do
@@ -327,6 +381,15 @@ data class Painel(
         vezDaConta = vezDaConta + 1,
         aviso = null,
         recado = null,
+        /*
+         * O carrinho é da mesa, e é aqui que ele muda de dono.
+         *
+         * Era zerado ao abrir o cardápio, então o garçom que montava meia
+         * rodada, voltava para conferir o total e abria o cardápio de novo
+         * perdia tudo o que tinha escolhido. Trocando de mesa ele some, que é
+         * o que aquela limpeza queria dizer.
+         */
+        carrinho = if (comandaId == this.comandaId) carrinho else emptyList(),
     )
 
     /**
@@ -428,7 +491,9 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         }
     }
     private val provedor = PlataformaAtual.pagamento(contexto)
-    private val impressora = PlataformaAtual.impressora(contexto)
+    // Uma impressora por processo, com fila: a via do cliente não sai no
+    // meio das comandas que o serviço está despejando.
+    private val impressora = ImpressoraDaCasa.de(contexto)
 
     private val _painel = MutableStateFlow(Painel(credenciadora = PlataformaAtual.credenciadora))
     val painel: StateFlow<Painel> = _painel.asStateFlow()
@@ -495,10 +560,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
     fun sairDoTurno() {
         viewModelScope.launch {
             configuracao.esquecerOperador("o operador saiu pelo botão")
-            _painel.update {
-                it.copy(estado = EstadoDaTela.PedindoPin, mesas = emptyList(), conta = null)
-                    .largandoAConta()
-            }
+            _painel.update { it.semOTurno() }
         }
     }
 
@@ -506,8 +568,8 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         viewModelScope.launch { buscarMesas() }
     }
 
-    private suspend fun buscarMesas(segundaTentativa: Boolean = false) {
-        _painel.update { it.copy(buscando = true) }
+    private suspend fun buscarMesas(segundaTentativa: Boolean = false, deFundo: Boolean = false) {
+        if (!deFundo) _painel.update { it.copy(buscando = true) }
         try {
             val resposta = api.buscarMesas()
             /*
@@ -519,21 +581,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
              * sozinho quando a rede voltasse.
              */
             escoarPendentes()
-            _painel.update {
-                it.copy(
-                    mesas = resposta.mesas,
-                    livres = resposta.livres,
-                    podeAbrir = resposta.podeAbrir,
-                    podeReceber = resposta.podeReceber,
-                    podePedirConta = resposta.podePedirConta,
-                    podeTransferir = resposta.podeTransferir,
-                    podeCancelar = resposta.podeCancelar,
-                    exigeNomeCliente = resposta.exigeNomeCliente,
-                    caixaAberto = resposta.caixaAberto,
-                    buscando = false,
-                    aviso = null,
-                )
-            }
+            _painel.update { it.comOSalao(resposta, deFundo) }
         } catch (e: Api.PrecisaDoPin) {
             /*
              * Duas coisas diferentes chegam aqui, e só uma custa o turno.
@@ -546,7 +594,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
              * redigitar o PIN no meio do salão.
              */
             if (!e.recusadoPeloServidor && !segundaTentativa && configuracao.atual().comOperador) {
-                buscarMesas(segundaTentativa = true)
+                buscarMesas(segundaTentativa = true, deFundo = deFundo)
                 return
             }
             if (e.recusadoPeloServidor) {
@@ -556,7 +604,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                 it.copy(estado = EstadoDaTela.PedindoPin, buscando = false, aviso = e.message)
             }
         } catch (e: Exception) {
-            _painel.update { it.copy(buscando = false, aviso = e.message ?: "Sem resposta do servidor.") }
+            _painel.update { it.semOSalao(e.message ?: "Sem resposta do servidor.", deFundo) }
         }
     }
 
@@ -603,7 +651,8 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                 _painel.update { it.copy(mesaParaAbrir = null) }
                 carregarConta(resposta.comandaId)
                 // O salão mudou: a mesa que era livre agora é conta aberta.
-                buscarMesas()
+                // De fundo: quem está olhando é a conta que acabou de abrir.
+                buscarMesas(deFundo = true)
             } catch (e: Exception) {
                 _painel.update {
                     it.copy(buscando = false, aviso = e.message ?: "Não foi possível abrir a mesa.")
@@ -715,27 +764,38 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
      */
     fun cancelarItem(motivo: String, autorizacaoId: String? = null) {
         val item = _painel.value.itemParaCancelar ?: return
-        viewModelScope.launch {
-            _painel.update { it.copy(buscando = true, aviso = null) }
-            try {
-                api.cancelarItem(item.itemId, motivo, autorizacaoId)
-                val comandaId = _painel.value.comandaId
-                _painel.update {
-                    it.copy(
-                        estado = EstadoDaTela.Conta,
-                        itemParaCancelar = null,
-                        pedindoLiberacao = false,
-                    )
-                }
-                if (comandaId != null) carregarConta(comandaId)
-                buscarMesas()
-                _painel.update { it.copy(buscando = false, recado = "Item cancelado.") }
-            } catch (e: Api.PrecisaDeLiberacao) {
-                _painel.update { it.copy(buscando = false, pedindoLiberacao = true, aviso = null) }
-            } catch (e: Exception) {
-                _painel.update {
-                    it.copy(buscando = false, aviso = e.message ?: "Não foi possível cancelar.")
-                }
+        viewModelScope.launch { cancelar(item, motivo, autorizacaoId) }
+    }
+
+    /*
+     * O item vem por parâmetro, e não do painel.
+     *
+     * A liberação do gerente chamava `cancelarItem`, que relia
+     * `itemParaCancelar` e desistia em silêncio se ele já não estivesse lá —
+     * um toque em voltar durante a liberação bastava. Quem desistia era a
+     * segunda chamada, mas o "carregando" era da primeira: a tela ficava
+     * pendurada até alguém reiniciar o aplicativo.
+     */
+    private suspend fun cancelar(item: ItemDaConta, motivo: String, autorizacaoId: String?) {
+        _painel.update { it.copy(buscando = true, aviso = null) }
+        try {
+            api.cancelarItem(item.itemId, motivo, autorizacaoId)
+            val comandaId = _painel.value.comandaId
+            _painel.update {
+                it.copy(
+                    estado = EstadoDaTela.Conta,
+                    itemParaCancelar = null,
+                    pedindoLiberacao = false,
+                )
+            }
+            if (comandaId != null) carregarConta(comandaId)
+            buscarMesas(deFundo = true)
+            _painel.update { it.copy(buscando = false, recado = "Item cancelado.") }
+        } catch (e: Api.PrecisaDeLiberacao) {
+            _painel.update { it.copy(buscando = false, pedindoLiberacao = true, aviso = null) }
+        } catch (e: Exception) {
+            _painel.update {
+                it.copy(buscando = false, aviso = e.message ?: "Não foi possível cancelar.")
             }
         }
     }
@@ -756,7 +816,9 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                     _painel.update { it.copy(buscando = false, aviso = r.motivo) }
                     return@launch
                 }
-                cancelarItem(motivo, r.autorizacaoId)
+                // Com o item na mão: liberado pelo gerente, o cancelamento
+                // segue mesmo que a tela já tenha mudado embaixo.
+                cancelar(item, motivo, r.autorizacaoId)
             } catch (e: Exception) {
                 _painel.update {
                     it.copy(buscando = false, aviso = e.message ?: "Não foi possível liberar.")
@@ -854,9 +916,10 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
     fun abrirCardapio() {
         val comandaId = _painel.value.comandaId ?: return
         viewModelScope.launch {
-            _painel.update {
-                it.copy(estado = EstadoDaTela.Cardapio, carrinho = emptyList(), aviso = null)
-            }
+            // O carrinho fica: quem volta à conta para conferir o total e
+            // reabre o cardápio está no meio de montar a rodada, não
+            // começando outra. Ele some quando a tela muda de mesa.
+            _painel.update { it.copy(estado = EstadoDaTela.Cardapio, aviso = null) }
             if (_painel.value.cardapio.isNotEmpty()) return@launch
 
             _painel.update { it.copy(buscando = true) }

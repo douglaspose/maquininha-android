@@ -35,7 +35,7 @@ import kotlinx.coroutines.launch
 class ServicoDaFila : LifecycleService() {
 
     private val api by lazy { Api(RepositorioDeConfiguracao(applicationContext)) }
-    private val impressora by lazy { PlataformaAtual.impressora(applicationContext) }
+    private val impressora by lazy { ImpressoraDaCasa.de(applicationContext) }
 
     override fun onCreate() {
         super.onCreate()

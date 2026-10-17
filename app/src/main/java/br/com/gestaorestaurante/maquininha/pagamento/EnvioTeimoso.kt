@@ -1,8 +1,11 @@
 package br.com.gestaorestaurante.maquininha.pagamento
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStore
 import br.com.gestaorestaurante.maquininha.api.PagamentoParaEnviar
 import br.com.gestaorestaurante.maquininha.api.RespostaDoPagamento
@@ -32,7 +35,22 @@ import kotlinx.serialization.json.Json
  * antes, o pior caso é ele sair duas vezes para o servidor, que reconhece a
  * referência e não duplica.
  */
-private val Context.pendencias by preferencesDataStore(name = "resultados-pendentes")
+/*
+ * O mesmo tratamento da configuração: corrompido recomeça vazio.
+ *
+ * Aqui dói mais — o que se perde é pagamento aprovado que o servidor ainda não
+ * recebeu. Mas o aplicativo que não abre não manda esse pagamento nunca, e
+ * ainda leva junto o salão inteiro: sem a tela não há como cobrar, lançar nem
+ * fechar conta. A leitura já tolera JSON estragado (ver `DepositoEmDisco`);
+ * isto cobre o arquivo estragado por baixo dela.
+ */
+private val Context.pendencias by preferencesDataStore(
+    name = "resultados-pendentes",
+    corruptionHandler = ReplaceFileCorruptionHandler {
+        Log.w("Maquininha", "fila de pagamentos corrompida no disco; recomeçando vazia", it)
+        emptyPreferences()
+    },
+)
 
 private val CHAVE_FILA = stringPreferencesKey("fila")
 

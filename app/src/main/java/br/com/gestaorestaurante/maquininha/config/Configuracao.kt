@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -18,7 +20,25 @@ import kotlinx.coroutines.flow.map
  * Fica no DataStore do aplicativo, que no Android é privado ao pacote; quem
  * conseguir tirar o token daqui já é dono do aparelho.
  */
-private val Context.armazem by preferencesDataStore(name = "configuracao")
+/*
+ * Arquivo corrompido vira arquivo vazio, e não aplicativo que não abre.
+ *
+ * Queda de energia no meio da gravação acontece — a maquininha fica na tomada
+ * do balcão e o salão desliga a régua no fim da noite. Sem este tratamento, o
+ * DataStore lança na primeira leitura, e a primeira leitura é no `init` do
+ * ViewModel: o aparelho não abre mais, e a casa fica sem maquininha até
+ * alguém reinstalar o aplicativo.
+ *
+ * Vazio custa redigitar servidor e token uma vez, nos Ajustes. É caro, mas é
+ * uma tela; o outro é um aparelho morto no meio do movimento.
+ */
+private val Context.armazem by preferencesDataStore(
+    name = "configuracao",
+    corruptionHandler = ReplaceFileCorruptionHandler {
+        Log.w("Maquininha", "configuração corrompida no disco; recomeçando vazia", it)
+        emptyPreferences()
+    },
+)
 
 private val CHAVE_SERVIDOR = stringPreferencesKey("servidor")
 private val CHAVE_TOKEN = stringPreferencesKey("token")
