@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
                             configurar = modelo::configurar,
                             abrirConfiguracao = modelo::abrirConfiguracao,
                             sairDosAjustes = modelo::sairDosAjustes,
+                            voltarPeloSistema = modelo::voltarPeloSistema,
                             entrarComPin = modelo::entrarComPin,
                             sairDoTurno = modelo::sairDoTurno,
                             atualizarMesas = modelo::atualizarMesas,

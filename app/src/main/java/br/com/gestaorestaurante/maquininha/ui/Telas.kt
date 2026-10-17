@@ -1,5 +1,6 @@
 package br.com.gestaorestaurante.maquininha.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -56,6 +57,16 @@ import br.com.gestaorestaurante.maquininha.pagamento.ResultadoDaCobranca
  */
 @Composable
 fun Tela(painel: Painel, acoes: Acoes) {
+    /*
+     * O botão Voltar do Android passa pelo aplicativo, e não por cima dele.
+     *
+     * Sempre ligado de propósito: nas telas de onde não se volta — o salão, o
+     * PIN, a cobrança em andamento — o que ele faz é nada, e é esse nada que
+     * segura o aparelho aberto. Antes, um toque ali fechava o aplicativo de
+     * qualquer tela, inclusive da que mostrava o resultado da venda.
+     */
+    BackHandler(enabled = true) { acoes.voltarPeloSistema() }
+
     when (painel.estado) {
         is EstadoDaTela.Abrindo -> TelaDeAndamento("Abrindo")
         is EstadoDaTela.Configurando -> TelaDeConfiguracao(painel, acoes)
@@ -110,6 +121,8 @@ class Acoes(
     val cobrancaAvulsa: () -> Unit,
     val sairDosAjustes: () -> Unit,
     val voltar: () -> Unit,
+    /** O botão de baixo do Android, que cada tela resolve do seu jeito. */
+    val voltarPeloSistema: () -> Unit,
 )
 
 /**

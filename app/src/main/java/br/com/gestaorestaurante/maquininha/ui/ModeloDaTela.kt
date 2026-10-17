@@ -97,6 +97,59 @@ sealed interface EstadoDaTela {
 }
 
 /**
+ * O que o botão Voltar do Android faz, tela a tela.
+ *
+ * Nada ligava esse botão ao aplicativo: ele fechava a tela, qualquer que
+ * fosse — no meio da conta, no meio da cobrança, na tela do resultado que o
+ * caixa ainda não tinha lido. Num aparelho de salão isso é perder a venda de
+ * vista com o cliente na frente, e foi o que aconteceu duas vezes nas provas
+ * deste repositório.
+ */
+internal enum class AcaoDoBack {
+    /** Nada: é tela de onde não se volta, ou a maquininha está com o cartão. */
+    NADA,
+
+    /** Fecha os ajustes sem salvar nada, voltando por onde se entrou. */
+    FECHAR_AJUSTES,
+
+    /** Encerra a venda que acabou de sair — o mesmo que "Nova cobrança". */
+    ENCERRAR_VENDA,
+
+    /** A tela anterior, pelo mesmo caminho do botão que a tela já mostra. */
+    TELA_ANTERIOR,
+}
+
+internal fun acaoDoBack(painel: Painel): AcaoDoBack = when (painel.estado) {
+    /*
+     * As raízes seguram o aplicativo aberto.
+     *
+     * O aparelho fica em cima do balcão a noite inteira; sair dele por um
+     * toque no botão de baixo é como desligar a maquininha no meio do
+     * atendimento. Quem quiser sair usa o botão de início do Android.
+     */
+    is EstadoDaTela.Abrindo,
+    is EstadoDaTela.PedindoPin,
+    is EstadoDaTela.Mesas -> AcaoDoBack.NADA
+
+    /*
+     * A maquininha está com o cartão do cliente: o Back não interrompe.
+     *
+     * A mesma razão que já cala o teclado durante a transação — a
+     * credenciadora está no meio de uma conversa que não é nossa para
+     * cancelar pela metade.
+     */
+    is EstadoDaTela.Cobrando -> AcaoDoBack.NADA
+
+    // Sem token não há para onde voltar: o aparelho não fala com ninguém.
+    is EstadoDaTela.Configurando ->
+        if (painel.configuracao.completa) AcaoDoBack.FECHAR_AJUSTES else AcaoDoBack.NADA
+
+    is EstadoDaTela.Terminada -> AcaoDoBack.ENCERRAR_VENDA
+
+    else -> AcaoDoBack.TELA_ANTERIOR
+}
+
+/**
  * O que o servidor precisa saber desta cobrança — ou nada, quando não há o
  * que contar.
  *
@@ -1010,6 +1063,16 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         _painel.update { it.copy(estado = EstadoDaTela.Configurando) }
     }
 
+    /** O botão Voltar do Android, que antes fechava o aplicativo de qualquer tela. */
+    fun voltarPeloSistema() {
+        when (acaoDoBack(_painel.value)) {
+            AcaoDoBack.NADA -> return
+            AcaoDoBack.FECHAR_AJUSTES -> sairDosAjustes()
+            AcaoDoBack.ENCERRAR_VENDA -> limpar()
+            AcaoDoBack.TELA_ANTERIOR -> voltar()
+        }
+    }
+
     /** Fecha os ajustes sem salvar nada, voltando por onde se entrou. */
     fun sairDosAjustes() {
         _painel.update { it.saindoDosAjustes() }
@@ -1047,12 +1110,49 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                 parcelas = painel.parcelas,
             )
 
-            val resultado = provedor.cobrar(cobranca) { andamento: AndamentoDaCobranca ->
-                _painel.update { it.copy(estado = EstadoDaTela.Cobrando(andamento.mensagem)) }
+            /*
+             * Daqui para baixo, a tela sai de `Cobrando` aconteça o que
+             * acontecer.
+             *
+             * `Cobrando` é a tela sem botão — "siga as instruções no visor".
+             * Uma exceção no meio dela (o SDK da credenciadora que estoura, a
+             * impressora sem papel, o disco que não grava) deixava o aparelho
+             * parado ali para sempre; e como o Back fechava o aplicativo em vez
+             * de voltar, a única saída era matar o processo, com o cliente na
+             * frente e o cartão talvez já debitado.
+             */
+            val resultado = try {
+                provedor.cobrar(cobranca) { andamento: AndamentoDaCobranca ->
+                    _painel.update { it.copy(estado = EstadoDaTela.Cobrando(andamento.mensagem)) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("Maquininha", "a credenciadora estourou no meio da cobrança", e)
+                ResultadoDaCobranca.Erro(e.message ?: "A credenciadora não respondeu.", e)
             }
 
-            val contado = contar(resultado, cobranca, painel.comandaId)
-            if (resultado is ResultadoDaCobranca.Aprovada) imprimirComprovante(resultado.transacao)
+            val contado = try {
+                contar(resultado, cobranca, painel.comandaId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                /*
+                 * Nem o servidor soube, nem a fila guardou. "Não enviado" é a
+                 * verdade que a tela precisa dizer — e é o aviso que manda não
+                 * lançar a venda de novo.
+                 */
+                Log.e("Maquininha", "não deu para contar o pagamento", e)
+                Contado(enviado = false)
+            }
+
+            val pendentes = try {
+                envio.quantasPendentes()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _painel.value.pendentesDeEnvio
+            }
 
             _painel.update {
                 it.copy(
@@ -1062,8 +1162,23 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                         quitou = contado.quitou,
                         faltaEmCentavos = contado.falta,
                     ),
-                    pendentesDeEnvio = envio.quantasPendentes(),
+                    pendentesDeEnvio = pendentes,
                 )
+            }
+
+            /*
+             * O papel vem depois da tela, e protegido: o comprovante é o
+             * segundo serviço desta venda, e impressora sem papel não pode
+             * esconder do caixa uma cobrança que foi aprovada.
+             */
+            if (resultado is ResultadoDaCobranca.Aprovada) {
+                try {
+                    imprimirComprovante(resultado.transacao)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("Maquininha", "não deu para imprimir o comprovante: ${e.message}")
+                }
             }
         }
     }

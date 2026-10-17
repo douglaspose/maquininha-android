@@ -58,6 +58,19 @@ class ProvedorSimulado : ProvedorDePagamento {
         delay(2500)
 
         /*
+         * R$ 6,66 estoura, em vez de responder.
+         *
+         * Credenciadora de verdade às vezes não devolve resultado nenhum: o
+         * SDK lança, o telefone perde a conexão com o pinpad, a biblioteca
+         * nativa morre. A tela de cobrança não tem botão, então uma exceção
+         * aqui prendia o aparelho nela. Este valor existe para provar na
+         * bancada que a tela sempre sai — e só existe neste flavor.
+         */
+        if (cobranca.valorEmCentavos == 666L) {
+            throw IllegalStateException("A credenciadora não respondeu (bancada).")
+        }
+
+        /*
          * Valores terminados em 00 sempre aprovam — é o que se usa no teste
          * de bancada, para não ficar refém do sorteio. O resto segue a
          * proporção de um dia comum: quase tudo aprova, uma em vinte recusa.
