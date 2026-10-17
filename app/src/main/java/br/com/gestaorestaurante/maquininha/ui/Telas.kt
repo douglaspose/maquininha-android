@@ -108,6 +108,7 @@ class Acoes(
     val anotarObservacao: (String, String) -> Unit,
     val cobrarDaConta: (Boolean) -> Unit,
     val cobrancaAvulsa: () -> Unit,
+    val sairDosAjustes: () -> Unit,
     val voltar: () -> Unit,
 )
 
@@ -534,7 +535,13 @@ private fun TelaDeResultado(painel: Painel, estado: EstadoDaTela.Terminada, acoe
 @Composable
 private fun TelaDeConfiguracao(painel: Painel, acoes: Acoes) {
     var servidor by remember { mutableStateOf(painel.configuracao.servidor) }
-    var token by remember { mutableStateOf(painel.configuracao.token) }
+    /*
+     * O campo nasce vazio mesmo com token guardado: o que está no aparelho não
+     * volta para a tela. Vazio quer dizer "deixa o que está lá", e é o normal
+     * de quem veio aqui só para acertar o endereço do servidor.
+     */
+    var token by remember { mutableStateOf("") }
+    val jaTemToken = painel.configuracao.token.isNotBlank()
 
     Column(
         Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
@@ -542,9 +549,15 @@ private fun TelaDeConfiguracao(painel: Painel, acoes: Acoes) {
     ) {
         Text("Ajustes do aparelho", fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(
-            "O token diz de qual restaurante este aparelho é. Pegue o dele em " +
-                "Gestão › Aparelhos: cadastrado, ele se corta sozinho se sumir. " +
-                "O token da unidade também serve, e vale para todos os aparelhos.",
+            if (jaTemToken) {
+                "Este aparelho já tem token, e ele não aparece aqui — quem o vê, " +
+                    "copia. Deixe o campo vazio para manter o que está guardado; " +
+                    "digite só para trocar por outro de Gestão › Aparelhos."
+            } else {
+                "O token diz de qual restaurante este aparelho é. Pegue o dele em " +
+                    "Gestão › Aparelhos: cadastrado, ele se corta sozinho se sumir. " +
+                    "O token da unidade também serve, e vale para todos os aparelhos."
+            },
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -560,7 +573,24 @@ private fun TelaDeConfiguracao(painel: Painel, acoes: Acoes) {
         OutlinedTextField(
             value = token,
             onValueChange = { token = it },
-            label = { Text("Token do aparelho") },
+            label = { Text(if (jaTemToken) "Trocar o token" else "Token do aparelho") },
+            /*
+             * O fim do token guardado, para conferir num 401 sem pôr a
+             * credencial inteira na tela.
+             *
+             * Aqui embaixo e não como placeholder: com o campo vazio o
+             * Material põe o rótulo dentro dele e esconde o placeholder — o
+             * fim só apareceria com o dedo no campo, que é justamente quando
+             * ninguém precisa dele.
+             */
+            supportingText = {
+                if (jaTemToken) {
+                    Text(
+                        "Guardado: " + painel.configuracao.tokenMascarado,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+            },
             singleLine = true,
             // Monoespaçada: é um token que alguém vai conferir caractere a
             // caractere quando o servidor responder 401.
@@ -570,14 +600,14 @@ private fun TelaDeConfiguracao(painel: Painel, acoes: Acoes) {
 
         Button(
             onClick = { acoes.configurar(servidor, token) },
-            enabled = servidor.isNotBlank() && token.isNotBlank(),
+            enabled = servidor.isNotBlank() && (token.isNotBlank() || jaTemToken),
             modifier = Modifier.fillMaxWidth().height(52.dp),
         ) {
             Text("Salvar")
         }
 
         if (painel.configuracao.completa) {
-            TextButton(onClick = acoes.limpar, modifier = Modifier.fillMaxWidth()) {
+            TextButton(onClick = acoes.sairDosAjustes, modifier = Modifier.fillMaxWidth()) {
                 Text("Voltar")
             }
         }

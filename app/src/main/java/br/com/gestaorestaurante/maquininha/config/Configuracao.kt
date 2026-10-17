@@ -49,6 +49,24 @@ data class Configuracao(
 ) {
     val completa: Boolean get() = servidor.isNotBlank() && token.isNotBlank()
     val comOperador: Boolean get() = operador.isNotBlank()
+
+    /**
+     * O token como a tela pode mostrá-lo: só o fim.
+     *
+     * Os ajustes ficam abertos na tela do PIN, porque é lá que se conserta um
+     * token errado — e isso punha a credencial da casa à vista de qualquer um
+     * que pegasse o aparelho. Com ela, outro aparelho entra como este: puxa a
+     * fila de impressão da casa e engole os papéis que a cozinha espera.
+     *
+     * O fim basta para o que a tela precisa: conferir, num 401, se o token
+     * guardado é o que a retaguarda mostra. Quatro caracteres não reconstroem
+     * os outros vinte e oito.
+     */
+    val tokenMascarado: String get() = when {
+        token.isBlank() -> ""
+        token.length <= 8 -> "•".repeat(token.length)
+        else -> "•".repeat(token.length - 4) + token.takeLast(4)
+    }
 }
 
 class RepositorioDeConfiguracao(private val contexto: Context) {

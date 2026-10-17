@@ -96,6 +96,16 @@ sealed interface EstadoDaTela {
     ) : EstadoDaTela
 }
 
+/**
+ * Por onde o aplicativo abre, e por onde ele sai dos ajustes: ajustes sem
+ * token, PIN sem turno, e o salão quando já sabe as duas coisas.
+ */
+internal fun primeiraTela(config: Configuracao): EstadoDaTela = when {
+    !config.completa -> EstadoDaTela.Configurando
+    !config.comOperador -> EstadoDaTela.PedindoPin
+    else -> EstadoDaTela.Mesas
+}
+
 data class Painel(
     val configuracao: Configuracao = Configuracao(),
     val credenciadora: String = "",
@@ -172,6 +182,52 @@ data class Painel(
 ) {
     val totalDoCarrinhoEmCentavos: Long
         get() = carrinho.sumOf { it.precoDaLinhaEmCentavos }
+
+    /**
+     * Sem turno aberto não se cobra: o PIN primeiro.
+     *
+     * O turno não é burocracia — é o nome que vai no pagamento e no caixa do
+     * fim da noite. Uma venda sem ele é dinheiro saindo do cartão do cliente
+     * sem dono do outro lado.
+     */
+    fun pedindoOTurno(): Painel = copy(
+        estado = EstadoDaTela.PedindoPin,
+        valorEmCentavos = 0,
+        aviso = "Digite seu PIN para começar o turno.",
+    )
+
+    /**
+     * A saída dos ajustes é a porta por onde se entrou.
+     *
+     * Antes era o teclado da cobrança, sempre — e como os ajustes estão
+     * abertos na tela do PIN (têm de estar: é onde se conserta um token
+     * errado), qualquer um que pegasse o aparelho chegava ao teclado por
+     * Ajustes › Voltar e passava um cartão sem turno nenhum.
+     */
+    fun saindoDosAjustes(): Painel =
+        copy(estado = primeiraTela(configuracao), valorEmCentavos = 0, aviso = null)
+
+    /** O teclado da venda de balcão, que é do caixa e pede turno aberto. */
+    fun naCobrancaAvulsa(): Painel =
+        if (!configuracao.comOperador) pedindoOTurno()
+        else copy(estado = EstadoDaTela.Parada, comandaId = null, valorEmCentavos = 0, aviso = null)
+            .largandoAConta()
+
+    /**
+     * O teclado da conta, com o que falta já digitado.
+     *
+     * Pede turno igual: o turno vale doze horas e a tela da conta fica aberta
+     * no bolso do garçom — vencido o turno no meio do atendimento, cobrar
+     * daqui passaria o cartão em nome de ninguém.
+     */
+    fun naCobrancaDaConta(conta: ContaDaMesa, tudo: Boolean): Painel =
+        if (!configuracao.comOperador) pedindoOTurno()
+        else copy(
+            estado = EstadoDaTela.Parada,
+            comandaId = conta.comandaId,
+            valorEmCentavos = if (tudo) conta.faltaEmCentavos else 0,
+            aviso = null,
+        )
 
     /**
      * A tela passa a ser desta conta, e a vez passa a ser desta busca.
@@ -302,16 +358,6 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                 _painel.update { it.copy(configuracao = config) }
             }
         }
-    }
-
-    /**
-     * Por onde o aplicativo abre: ajustes sem token, PIN sem turno, e o salão
-     * quando já sabe as duas coisas.
-     */
-    private fun primeiraTela(config: Configuracao) = when {
-        !config.completa -> EstadoDaTela.Configurando
-        !config.comOperador -> EstadoDaTela.PedindoPin
-        else -> EstadoDaTela.Mesas
     }
 
     private suspend fun prepararProvedor() {
@@ -821,22 +867,12 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
      */
     fun cobrarDaConta(tudo: Boolean) {
         val conta = _painel.value.conta ?: return
-        _painel.update {
-            it.copy(
-                estado = EstadoDaTela.Parada,
-                comandaId = conta.comandaId,
-                valorEmCentavos = if (tudo) conta.faltaEmCentavos else 0,
-                aviso = null,
-            )
-        }
+        _painel.update { it.naCobrancaDaConta(conta, tudo) }
     }
 
     /** Cobrança avulsa: valor digitado, sem conta nenhuma no salão. */
     fun cobrancaAvulsa() {
-        _painel.update {
-            it.copy(estado = EstadoDaTela.Parada, comandaId = null, valorEmCentavos = 0, aviso = null)
-                .largandoAConta()
-        }
+        _painel.update { it.naCobrancaAvulsa() }
     }
 
     /** Volta uma tela, sem perder o turno. */
@@ -923,9 +959,17 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         _painel.update { it.copy(parcelas = parcelas.coerceIn(1, 12)) }
     }
 
+    /**
+     * Guarda servidor e token.
+     *
+     * Token em branco quer dizer "deixa o que está lá": a tela não mostra o
+     * token guardado, então o campo vazio é o normal de quem foi aos ajustes
+     * só para acertar o endereço do servidor.
+     */
     fun configurar(servidor: String, token: String) {
         viewModelScope.launch {
-            configuracao.guardar(servidor, token)
+            val atual = configuracao.atual()
+            configuracao.guardar(servidor, token.ifBlank { atual.token })
             val config = configuracao.atual()
             _painel.update { it.copy(configuracao = config, estado = primeiraTela(config)) }
             if (config.completa) ServicoDaFila.ligar(contexto)
@@ -936,11 +980,28 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         _painel.update { it.copy(estado = EstadoDaTela.Configurando) }
     }
 
+    /** Fecha os ajustes sem salvar nada, voltando por onde se entrou. */
+    fun sairDosAjustes() {
+        _painel.update { it.saindoDosAjustes() }
+    }
+
     fun cobrar() {
         val painel = _painel.value
         if (painel.valorEmCentavos <= 0 || painel.estado is EstadoDaTela.Cobrando) return
 
         viewModelScope.launch {
+            /*
+             * A última tranca, e a que vale: nenhum cartão passa sem turno.
+             *
+             * As telas já não oferecem o teclado sem turno, mas é aqui que o
+             * dinheiro sai do cartão do cliente — e é a credenciadora que
+             * aprova, não o nosso servidor. Uma tela nova que esqueça a
+             * conferência não vira venda sem dono por causa disto.
+             */
+            if (!configuracao.atual().comOperador) {
+                _painel.update { it.pedindoOTurno() }
+                return@launch
+            }
             _painel.update { it.copy(estado = EstadoDaTela.Cobrando("Iniciando")) }
 
             /*
