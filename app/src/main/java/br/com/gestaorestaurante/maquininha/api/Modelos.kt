@@ -236,7 +236,11 @@ data class PagamentoDaConta(
  */
 @Serializable
 data class PagamentoParaEnviar(
-    val comandaId: String,
+    /**
+     * A conta que este pagamento quita. Nulo na venda de balcão — o cliente em
+     * pé, que não abriu conta: lá o servidor abre a comanda dele.
+     */
+    val comandaId: String? = null,
     val referencia: String,
     /** CREDITO, CREDITO_PARCELADO, DEBITO, PIX ou VOUCHER. */
     val forma: String,

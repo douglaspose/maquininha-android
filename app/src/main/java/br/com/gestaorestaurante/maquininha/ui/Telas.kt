@@ -483,6 +483,23 @@ private fun TelaDeResultado(painel: Painel, estado: EstadoDaTela.Terminada, acoe
          * continua aberta — e quem está no balcão precisa saber disso antes de
          * liberar a mesa.
          */
+        /*
+         * E na venda de balcão, que não tem conta: a linha confirma que ela
+         * chegou ao sistema. Antes o aparelho nem tentava mandar, e o silêncio
+         * desta tela era a única notícia que o caixa tinha de uma venda que
+         * não existia em lugar nenhum.
+         */
+        if (painel.comandaId == null && estado.resultado is ResultadoDaCobranca.Aprovada && estado.enviado) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Venda de balcão registrada.",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+
         if (painel.comandaId != null && estado.resultado is ResultadoDaCobranca.Aprovada && estado.enviado) {
             Spacer(Modifier.height(12.dp))
             Text(

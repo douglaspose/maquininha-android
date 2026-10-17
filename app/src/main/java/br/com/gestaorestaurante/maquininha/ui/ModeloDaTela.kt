@@ -97,6 +97,36 @@ sealed interface EstadoDaTela {
 }
 
 /**
+ * O que o servidor precisa saber desta cobrança — ou nada, quando não há o
+ * que contar.
+ *
+ * Recusa, cancelamento e erro não são pagamento: não existe dinheiro para
+ * registrar. Aprovada, sempre vai, **com ou sem conta**: sem conta é a venda
+ * de balcão, e era exatamente ela que o aparelho engolia — cobrava no cartão,
+ * não mandava nada, e a casa fechava o caixa com um extrato da adquirente que
+ * nenhuma venda explicava.
+ *
+ * O valor que vai é o que a credenciadora capturou, e não o que foi digitado:
+ * numa cobrança parcial ou ajustada no visor, os dois diferem, e o que a casa
+ * recebeu é o da credenciadora.
+ */
+internal fun pagamentoParaContar(
+    resultado: ResultadoDaCobranca,
+    cobranca: Cobranca,
+    comandaId: String?,
+): PagamentoParaEnviar? {
+    val aprovada = (resultado as? ResultadoDaCobranca.Aprovada)?.transacao ?: return null
+    return PagamentoParaEnviar(
+        comandaId = comandaId,
+        referencia = cobranca.referencia,
+        forma = cobranca.forma.name,
+        valorEmCentavos = aprovada.valorEmCentavos,
+        nsu = aprovada.identificadorNaCredenciadora,
+        bandeira = aprovada.bandeira,
+    )
+}
+
+/**
  * Por onde o aplicativo abre, e por onde ele sai dos ajustes: ajustes sem
  * token, PIN sem turno, e o salão quando já sabe as duas coisas.
  */
@@ -1040,29 +1070,18 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
 
     private data class Contado(val enviado: Boolean, val quitou: Boolean = false, val falta: Long = 0)
 
-    /**
-     * Conta ao servidor o pagamento aprovado, e insiste se precisar.
-     *
-     * Só o que foi aprovado **numa conta** vai: recusa não é pagamento, e
-     * cobrança avulsa não tem conta onde entrar — essa fica só na
-     * credenciadora, para a conciliação.
-     */
+/** Conta ao servidor o pagamento aprovado, e insiste se precisar. */
     private suspend fun contar(
         resultado: ResultadoDaCobranca,
         cobranca: Cobranca,
         comandaId: String?,
     ): Contado {
-        val aprovada = (resultado as? ResultadoDaCobranca.Aprovada)?.transacao
-        if (aprovada == null || comandaId == null) return Contado(enviado = true)
-
-        val pagamento = PagamentoParaEnviar(
-            comandaId = comandaId,
-            referencia = cobranca.referencia,
-            forma = cobranca.forma.name,
-            valorEmCentavos = aprovada.valorEmCentavos,
-            nsu = aprovada.identificadorNaCredenciadora,
-            bandeira = aprovada.bandeira,
-        )
+        /*
+         * Nada a contar: a recusa não moveu dinheiro. "Enviado" aqui quer
+         * dizer "não há o que enviar", e é o que mantém a tela calada.
+         */
+        val pagamento = pagamentoParaContar(resultado, cobranca, comandaId)
+            ?: return Contado(enviado = true)
 
         /*
          * Tudo passa pela fila, inclusive a primeira tentativa.
