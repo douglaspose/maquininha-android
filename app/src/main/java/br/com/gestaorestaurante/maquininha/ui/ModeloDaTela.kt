@@ -29,6 +29,8 @@ import br.com.gestaorestaurante.maquininha.pagamento.AndamentoDaCobranca
 import br.com.gestaorestaurante.maquininha.pagamento.Cobranca
 import br.com.gestaorestaurante.maquininha.pagamento.DepositoEmDisco
 import br.com.gestaorestaurante.maquininha.pagamento.EnvioTeimoso
+import br.com.gestaorestaurante.maquininha.pagamento.EsperaACasa
+import br.com.gestaorestaurante.maquininha.pagamento.RecusaDefinitiva
 import br.com.gestaorestaurante.maquininha.pagamento.TurnoVencido
 import br.com.gestaorestaurante.maquininha.pagamento.FormaDePagamento
 import br.com.gestaorestaurante.maquininha.pagamento.ResultadoDaCobranca
@@ -201,6 +203,14 @@ data class Painel(
     val forma: FormaDePagamento = FormaDePagamento.CREDITO,
     val parcelas: Int = 1,
     val pendentesDeEnvio: Int = 0,
+    /**
+     * Vendas que o servidor recusou de vez e que ninguém resolveu ainda.
+     *
+     * O cartão do cliente foi debitado e o sistema não tem o registro: isto
+     * precisa aparecer para alguém ir atrás com o comprovante na mão, em vez
+     * de o aparelho tentar de novo a noite inteira e segurar as outras atrás.
+     */
+    val recusadasPeloServidor: Int = 0,
     /** O salão, como o servidor respondeu da última vez. */
     val mesas: List<MesaAberta> = emptyList(),
     /** As mesas sem conta aberta, como o servidor respondeu da última vez. */
@@ -315,6 +325,7 @@ data class Painel(
         provedorPronto = provedorPronto,
         motivoDoProvedor = motivoDoProvedor,
         pendentesDeEnvio = pendentesDeEnvio,
+        recusadasPeloServidor = recusadasPeloServidor,
         estado = EstadoDaTela.PedindoPin,
         // Derruba a vez: busca de conta no ar não volta na tela do próximo.
         vezDaConta = vezDaConta + 1,
@@ -488,6 +499,13 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
             api.enviarPagamento(pagamento, cracha)
         } catch (e: Api.PrecisaDoPin) {
             throw TurnoVencido(e.message ?: "Turno vencido.")
+        } catch (e: Api.RegraDaCasa) {
+            // "Nenhum caixa aberto", "esta conta já está quitada": o momento é
+            // que está errado, e isso muda sozinho.
+            throw EsperaACasa(e.message ?: "O servidor recusou agora.")
+        } catch (e: Api.RecusadoPeloServidor) {
+            // 400 e 404 não mudam: insistir nisso era o que travava a fila.
+            throw RecusaDefinitiva(e.message ?: "O servidor recusou esta venda.")
         }
     }
     private val provedor = PlataformaAtual.pagamento(contexto)
@@ -680,8 +698,20 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
      */
     private suspend fun escoarPendentes() {
         try {
-            if (envio.escoar() > 0) {
-                _painel.update { it.copy(pendentesDeEnvio = envio.quantasPendentes()) }
+            envio.escoar()
+            /*
+             * As duas contagens se refazem sempre, e não só quando algo sai.
+             *
+             * Uma venda pode deixar de estar pendente sem ter ido embora — foi
+             * recusada de vez —, e aí o escoamento devolve zero. Contando só
+             * nesse caso, a tela seguia prometendo "1 por enviar" para um
+             * pagamento que já não estava mais na fila de tentativas.
+             */
+            _painel.update {
+                it.copy(
+                    pendentesDeEnvio = envio.quantasPendentes(),
+                    recusadasPeloServidor = envio.quantasRecusadas(),
+                )
             }
         } catch (e: CancellationException) {
             throw e
@@ -1256,6 +1286,13 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
             } catch (e: Exception) {
                 _painel.value.pendentesDeEnvio
             }
+            val recusadas = try {
+                envio.quantasRecusadas()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _painel.value.recusadasPeloServidor
+            }
 
             _painel.update {
                 it.copy(
@@ -1266,6 +1303,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                         faltaEmCentavos = contado.falta,
                     ),
                     pendentesDeEnvio = pendentes,
+                    recusadasPeloServidor = recusadas,
                 )
             }
 

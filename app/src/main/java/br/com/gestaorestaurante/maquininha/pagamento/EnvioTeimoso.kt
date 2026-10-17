@@ -55,13 +55,6 @@ private val Context.pendencias by preferencesDataStore(
 private val CHAVE_FILA = stringPreferencesKey("fila")
 
 /**
- * Onde a fila mora.
- *
- * Existe como interface para a regra acima — a ordem de gravar e mandar, o que
- * acontece no cancelamento — poder ser testada na JVM, sem emulador. É o
- * caminho do dinheiro: vale o custo de uma interface de dois métodos.
- */
-/**
  * Um pagamento esperando a rede, com o crachá de quem cobrou.
  *
  * O crachá vai junto porque a venda entra no servidor em nome de quem o
@@ -74,18 +67,41 @@ data class PendenteDeEnvio(
     val pagamento: PagamentoParaEnviar,
     /** Vazio nos pagamentos guardados antes desta versão. */
     val cracha: String = "",
+    /**
+     * Por que o servidor recusou esta venda de vez.
+     *
+     * Nulo é o normal: esperando a rede. Preenchido, o aparelho parou de
+     * tentar — o corpo desta venda nunca vai ser aceito como está — e ela fica
+     * guardada, contada à parte na tela, para a casa resolver com o
+     * comprovante na mão. Jogá-la fora seria sumir com dinheiro que saiu do
+     * cartão do cliente; tentar de novo seria segurar a fila inteira atrás
+     * dela a noite toda.
+     */
+    val recusa: String? = null,
 )
 
 /**
- * O crachá daquele pagamento não vale mais — turno vencido ou aparelho sem
- * turno nenhum.
+ * Recusa que pode mudar de ideia: quem está errado é o momento, não o corpo.
  *
  * Tem nome próprio porque o escoamento faz coisas opostas nos dois casos: na
  * queda de rede ele para (o resto também não vai passar), e aqui ele pula
  * este e segue com os outros. Quem traduz a recusa do servidor para cá é
  * quem chama, para esta fila não depender da `Api`.
  */
-class TurnoVencido(mensagem: String) : Exception(mensagem)
+open class EsperaACasa(mensagem: String) : Exception(mensagem)
+
+/** O crachá daquele pagamento não vale mais — turno vencido, ou nenhum. */
+class TurnoVencido(mensagem: String) : EsperaACasa(mensagem)
+
+/**
+ * O servidor recusou de vez: este corpo não vai ser aceito como está.
+ *
+ * Valor acima do que a coluna guarda, referência comprida demais, conta que
+ * não existe mais. Insistir nisso foi o que travou a fila a noite inteira: a
+ * venda recusada ficava na cabeça e as de trás não saíam. Agora ela sai da
+ * fila marcada, e a tela conta quantas são.
+ */
+class RecusaDefinitiva(mensagem: String) : Exception(mensagem)
 
 interface DepositoDePendentes {
     suspend fun ler(): List<PendenteDeEnvio>
@@ -165,6 +181,15 @@ class EnvioTeimoso(
                 return resposta
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: RecusaDefinitiva) {
+                // Recusa que não muda: insistir só gasta o tempo do caixa, que
+                // está com o cliente na frente.
+                marcarRecusada(pendente, e.message ?: "O servidor recusou esta venda.")
+                return null
+            } catch (e: EsperaACasa) {
+                // Nem a rede nem o corpo: o momento. Fica na fila e tenta no
+                // próximo escoamento, sem gastar as três tentativas agora.
+                return null
             } catch (e: Exception) {
                 if (tentativa < TENTATIVAS - 1) delay(1000L shl tentativa)
             }
@@ -183,7 +208,7 @@ class EnvioTeimoso(
      * Devolve quantos saíram, para a tela parar de prometer o que já aconteceu.
      */
     suspend fun escoar(): Int {
-        if (deposito.ler().isEmpty()) return 0
+        if (deposito.ler().none { it.recusa == null }) return 0
 
         var enviados = 0
         val adiados = mutableSetOf<String>()
@@ -191,19 +216,31 @@ class EnvioTeimoso(
         // natureza, e uma venda nova pode entrar no meio dele.
         while (true) {
             val proximo = tranca.withLock {
-                deposito.ler().firstOrNull { it.pagamento.referencia !in adiados }
+                deposito.ler().firstOrNull {
+                    // Recusada de vez não volta para a fila de tentativas: ela
+                    // está aqui só para não sumir, e a tela conta quantas são.
+                    it.recusa == null && it.pagamento.referencia !in adiados
+                }
             } ?: break
             try {
                 mandar(proximo.pagamento, proximo.cracha.ifBlank { null })
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: TurnoVencido) {
+            } catch (e: RecusaDefinitiva) {
                 /*
-                 * O crachá de quem cobrou venceu — doze horas depois, numa
-                 * casa que passou a noite sem rede. Não é a rede, então os
-                 * outros continuam saindo; este espera a pessoa abrir turno de
-                 * novo, porque a venda é dela e entrar no nome de outra pessoa
-                 * é pior do que esperar.
+                 * O servidor não vai mudar de ideia sobre este corpo. Ela sai
+                 * da fila de tentativas marcada — guardada, contada na tela —
+                 * e o escoamento segue: era isto que travava a noite inteira,
+                 * com a venda recusada na cabeça e as boas atrás dela.
+                 */
+                marcarRecusada(proximo, e.message ?: "O servidor recusou esta venda.")
+                adiados += proximo.pagamento.referencia
+            } catch (e: EsperaACasa) {
+                /*
+                 * O crachá venceu, ou o caixa ainda não abriu. Não é a rede,
+                 * então os outros continuam saindo; este espera a casa — a
+                 * venda é de quem cobrou, e entrar no nome de outra pessoa (ou
+                 * em caixa nenhum) é pior do que esperar.
                  */
                 adiados += proximo.pagamento.referencia
             } catch (e: Exception) {
@@ -218,7 +255,34 @@ class EnvioTeimoso(
         return enviados
     }
 
-    suspend fun quantasPendentes(): Int = deposito.ler().size
+    /** Quantas ainda esperam a rede ou a casa. */
+    suspend fun quantasPendentes(): Int = deposito.ler().count { it.recusa == null }
+
+    /** Quantas o servidor recusou de vez, e estão guardadas esperando a casa resolver. */
+    suspend fun quantasRecusadas(): Int = deposito.ler().count { it.recusa != null }
+
+    /**
+     * Marca a venda como recusada sem tirá-la do disco.
+     *
+     * Fora da fila de tentativas, mas dentro do aparelho: o cartão do cliente
+     * foi debitado, e o que a casa precisa é saber que existe uma venda sem
+     * registro — com o NSU no comprovante — para resolver na retaguarda.
+     */
+    private suspend fun marcarRecusada(pendente: PendenteDeEnvio, motivo: String) {
+        withContext(NonCancellable) {
+            tranca.withLock {
+                deposito.gravar(
+                    deposito.ler().map {
+                        if (it.pagamento.referencia == pendente.pagamento.referencia) {
+                            it.copy(recusa = motivo)
+                        } else {
+                            it
+                        }
+                    }
+                )
+            }
+        }
+    }
 
     /**
      * Gravar e remover são indiferentes a cancelamento de propósito: é a única

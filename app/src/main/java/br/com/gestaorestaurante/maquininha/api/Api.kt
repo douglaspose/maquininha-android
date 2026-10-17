@@ -44,7 +44,28 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
     private val tipoJson = "application/json; charset=utf-8".toMediaType()
 
     /** Falha da conversa com o servidor, já com um texto que cabe numa tela. */
-    class FalhaNaApi(mensagem: String, causa: Throwable? = null) : IOException(mensagem, causa)
+    open class FalhaNaApi(mensagem: String, causa: Throwable? = null) :
+        IOException(mensagem, causa)
+
+    /**
+     * O servidor recusou e vai recusar de novo: o corpo é que está errado.
+     *
+     * 400 e 404 não mudam com o tempo — valor acima do que a coluna guarda,
+     * referência comprida demais, conta que não existe. Separado da falha de
+     * rede porque a fila de pagamentos faz coisas opostas nas duas: numa ela
+     * insiste a noite inteira, na outra insistir é garantir que a venda de
+     * trás nunca saia.
+     */
+    class RecusadoPeloServidor(mensagem: String, val codigo: Int) : FalhaNaApi(mensagem)
+
+    /**
+     * A regra da casa recusou **agora**, e isso pode mudar.
+     *
+     * É o 409: "nenhum caixa aberto", "esta conta já está quitada". Nada de
+     * errado com o corpo — errado está o momento. A fila guarda este e segue
+     * com os outros, em vez de parar atrás dele.
+     */
+    class RegraDaCasa(mensagem: String) : FalhaNaApi(mensagem)
 
     /**
      * O servidor mandou pedir a liberação de quem pode — não é recusa.
@@ -148,6 +169,21 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
                             )
                         }
                         throw FalhaNaApi(doServidor.ifBlank { "Token recusado pelo servidor." })
+                    }
+                    /*
+                     * 409 é a regra da casa falando do momento; o resto do 4xx
+                     * é o corpo estando errado. Os dois saem com nome próprio
+                     * para a fila de pagamentos saber o que fazer — e o 5xx
+                     * segue como falha comum, porque servidor que caiu volta.
+                     */
+                    if (resposta.code == 409) {
+                        throw RegraDaCasa(doServidor.ifBlank { "O servidor recusou agora." })
+                    }
+                    if (resposta.code in 400..499) {
+                        throw RecusadoPeloServidor(
+                            doServidor.ifBlank { "O servidor recusou esta venda (${resposta.code})." },
+                            resposta.code,
+                        )
                     }
                     throw FalhaNaApi(doServidor.ifBlank { "Servidor respondeu ${resposta.code}." })
                 }

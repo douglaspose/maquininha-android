@@ -345,6 +345,14 @@ private fun Cabecalho(painel: Painel, acoes: Acoes) {
             val (cor, texto) = when {
                 !painel.provedorPronto ->
                     MaterialTheme.colorScheme.error to "${painel.credenciadora} · não pronta"
+                /*
+                 * A recusa vem na frente do "por enviar": venda que o servidor
+                 * não aceita é a única que não se resolve sozinha com o tempo —
+                 * alguém precisa ir atrás com o comprovante.
+                 */
+                painel.recusadasPeloServidor > 0 ->
+                    MaterialTheme.colorScheme.error to
+                        "${painel.recusadasPeloServidor} venda(s) recusada(s) pelo servidor"
                 painel.pendentesDeEnvio > 0 ->
                     MaterialTheme.colorScheme.tertiary to
                         "${painel.pendentesDeEnvio} venda(s) por enviar"

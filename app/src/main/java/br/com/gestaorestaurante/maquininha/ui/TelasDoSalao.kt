@@ -181,7 +181,15 @@ internal fun TelaDeMesas(painel: Painel, acoes: Acoes) {
                     buildString {
                         append(painel.configuracao.operadorNome.ifBlank { "Operador" })
                         append(" · ${painel.mesas.size} mesa(s)")
-                        if (painel.pendentesDeEnvio > 0) {
+                        /*
+                         * Uma coisa de cada vez: a linha é de uma linha só, e
+                         * com as duas contagens ela corta no meio. A recusa vem
+                         * na frente porque é a única que não se resolve
+                         * sozinha — alguém precisa ir atrás com o comprovante.
+                         */
+                        if (painel.recusadasPeloServidor > 0) {
+                            append(" · ${painel.recusadasPeloServidor} recusada(s)")
+                        } else if (painel.pendentesDeEnvio > 0) {
                             append(" · ${painel.pendentesDeEnvio} por enviar")
                         }
                     },

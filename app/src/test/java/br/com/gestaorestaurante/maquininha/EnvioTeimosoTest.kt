@@ -4,7 +4,9 @@ import br.com.gestaorestaurante.maquininha.api.PagamentoParaEnviar
 import br.com.gestaorestaurante.maquininha.api.RespostaDoPagamento
 import br.com.gestaorestaurante.maquininha.pagamento.DepositoDePendentes
 import br.com.gestaorestaurante.maquininha.pagamento.EnvioTeimoso
+import br.com.gestaorestaurante.maquininha.pagamento.EsperaACasa
 import br.com.gestaorestaurante.maquininha.pagamento.PendenteDeEnvio
+import br.com.gestaorestaurante.maquininha.pagamento.RecusaDefinitiva
 import br.com.gestaorestaurante.maquininha.pagamento.TurnoVencido
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -224,5 +226,138 @@ class EnvioTeimosoTest {
         // Nulo quer dizer "use o crachá do aparelho".
         assertNull(crachaUsado)
         assertEquals(emptyList<PendenteDeEnvio>(), deposito.fila)
+    }
+// --- o que o servidor recusa de vez ---
+
+    /**
+     * O que travava a noite inteira.
+     *
+     * Erro de sistema do servidor — valor acima do que a coluna guarda,
+     * referência comprida demais — chegava aqui como "falhou", igual a uma
+     * queda de rede: a fila reenviava a mesma venda para sempre e parava na
+     * cabeça, segurando todas as de trás. Agora ela sai da fila de tentativas
+     * marcada, e as outras saem.
+     */
+    @Test
+    fun `recusa definitiva sai da fila de tentativas, e as de tras saem`() = runTest {
+        val deposito = DepositoDeTeste()
+        deposito.fila = listOf(pendente("venda-ruim"), pendente("venda-boa"))
+        val envio = EnvioTeimoso(deposito) { pagamento, _ ->
+            if (pagamento.referencia == "venda-ruim") {
+                throw RecusaDefinitiva("Valor alto demais para uma venda.")
+            }
+            recebido
+        }
+
+        val enviados = envio.escoar()
+
+        assertEquals(1, enviados)
+        assertEquals(0, envio.quantasPendentes())
+        assertEquals(1, envio.quantasRecusadas())
+        // Guardada, e com o motivo: o cartão foi debitado e alguém vai atrás
+        // com o comprovante na mão.
+        assertEquals(listOf("venda-ruim"), deposito.referencias)
+        assertEquals("Valor alto demais para uma venda.", deposito.fila[0].recusa)
+    }
+
+    @Test
+    fun `a recusada nao e tentada de novo no proximo escoamento`() = runTest {
+        val deposito = DepositoDeTeste()
+        deposito.fila = listOf(pendente("venda-ruim"))
+        var tentativas = 0
+        val envio = EnvioTeimoso(deposito) { _, _ ->
+            tentativas++
+            throw RecusaDefinitiva("Referência comprida demais.")
+        }
+
+        envio.escoar()
+        envio.escoar()
+        envio.escoar()
+
+        assertEquals(1, tentativas)
+    }
+
+    /** Com o cliente na frente, insistir três vezes no que não muda é só demora. */
+    @Test
+    fun `recusa definitiva na cobranca nao gasta as tres tentativas`() = runTest {
+        val deposito = DepositoDeTeste()
+        var tentativas = 0
+        val envio = EnvioTeimoso(deposito) { _, _ ->
+            tentativas++
+            throw RecusaDefinitiva("O servidor recusou esta venda (400).")
+        }
+
+        val resposta = envio.enviar(pagamento("venda-14"), "cracha-do-caixa")
+
+        assertNull(resposta)
+        assertEquals(1, tentativas)
+        assertEquals(1, envio.quantasRecusadas())
+        assertEquals(0, envio.quantasPendentes())
+    }
+
+    /**
+     * "Nenhum caixa aberto" é o momento, não o corpo: muda sozinho quando
+     * alguém abrir o caixa. Esta espera a casa — e não segura as outras.
+     */
+    @Test
+    fun `recusa da casa espera a proxima volta, sem travar as outras`() = runTest {
+        val deposito = DepositoDeTeste()
+        deposito.fila = listOf(pendente("venda-15"), pendente("venda-16"))
+        val envio = EnvioTeimoso(deposito) { pagamento, _ ->
+            if (pagamento.referencia == "venda-15") {
+                throw EsperaACasa("Nenhum caixa aberto. Abra o caixa antes de receber.")
+            }
+            recebido
+        }
+
+        val enviados = envio.escoar()
+
+        assertEquals(1, enviados)
+        // Continua pendente, e não recusada: ela ainda vai sair.
+        assertEquals(1, envio.quantasPendentes())
+        assertEquals(0, envio.quantasRecusadas())
+        assertEquals(listOf("venda-15"), deposito.referencias)
+    }
+
+    @Test
+    fun `aberto o caixa, a que esperava a casa sai`() = runTest {
+        val deposito = DepositoDeTeste()
+        deposito.fila = listOf(pendente("venda-17"))
+        var caixaAberto = false
+        val envio = EnvioTeimoso(deposito) { _, _ ->
+            if (!caixaAberto) throw EsperaACasa("Nenhum caixa aberto.") else recebido
+        }
+
+        assertEquals(0, envio.escoar())
+        caixaAberto = true
+        assertEquals(1, envio.escoar())
+        assertEquals(0, envio.quantasPendentes())
+    }
+/**
+     * A recusada fica no disco, e a venda nova que chega depois dela precisa
+     * passar por cima: é o caso misto — fila com uma recusada guardada e uma
+     * boa esperando — que prova que a marca é respeitada, e não o atalho de
+     * "a fila só tem recusadas".
+     */
+    @Test
+    fun `a venda nova passa por cima da recusada guardada`() = runTest {
+        val deposito = DepositoDeTeste()
+        deposito.fila = listOf(
+            pendente("venda-recusada").copy(recusa = "O servidor recusou esta venda (400)."),
+            pendente("venda-nova"),
+        )
+        val mandados = mutableListOf<String>()
+        val envio = EnvioTeimoso(deposito) { pagamento, _ ->
+            mandados += pagamento.referencia
+            recebido
+        }
+
+        val enviados = envio.escoar()
+
+        assertEquals(1, enviados)
+        // A recusada nem foi tentada.
+        assertEquals(listOf("venda-nova"), mandados)
+        assertEquals(listOf("venda-recusada"), deposito.referencias)
+        assertEquals(1, envio.quantasRecusadas())
     }
 }
