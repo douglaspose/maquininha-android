@@ -136,6 +136,18 @@ data class Painel(
     val conta: ContaDaMesa? = null,
     /** A conta que este valor vai pagar. Nulo na cobrança avulsa. */
     val comandaId: String? = null,
+    /**
+     * De quem é a vez na tela da conta.
+     *
+     * Sobe a cada conta pedida e a cada vez que a tela deixa de ser daquela
+     * conta. A resposta confere a vez dela antes de escrever, porque o salão
+     * responde em segundos e o garçom anda mais rápido do que isso: a conta da
+     * mesa que ele largou no meio do carregamento chegava por cima da mesa que
+     * ele abriu depois — ou por cima do teclado da cobrança avulsa, prendendo
+     * o valor digitado à conta de uma mesa que não é a do cliente na frente
+     * dele.
+     */
+    val vezDaConta: Int = 0,
     /** Recado curto para a tela: o que o servidor recusou, ou a rede que caiu. */
     val aviso: String? = null,
     /**
@@ -160,6 +172,47 @@ data class Painel(
 ) {
     val totalDoCarrinhoEmCentavos: Long
         get() = carrinho.sumOf { it.precoDaLinhaEmCentavos }
+
+    /**
+     * A tela passa a ser desta conta, e a vez passa a ser desta busca.
+     *
+     * A mesa já fica escrita aqui, antes de a conta chegar: é dela que a tela
+     * é desde o toque, e é isso que permite recusar depois uma resposta de
+     * outra mesa.
+     */
+    fun pedindoAConta(comandaId: String): Painel = copy(
+        estado = EstadoDaTela.Conta,
+        buscando = true,
+        conta = null,
+        comandaId = comandaId,
+        vezDaConta = vezDaConta + 1,
+        aviso = null,
+        recado = null,
+    )
+
+    /**
+     * A tela deixa de ser da conta: a vez morre com ela.
+     *
+     * Quem chamar isto não precisa saber se há busca no ar — se houver, a
+     * resposta dela chega e cai fora sozinha.
+     */
+    fun largandoAConta(): Painel = copy(vezDaConta = vezDaConta + 1)
+
+    /** A conta chegou. Entra na tela se ainda for a vez dela. */
+    fun comAContaQueChegou(vez: Int, conta: ContaDaMesa): Painel =
+        if (vez != vezDaConta) this else copy(conta = conta, buscando = false)
+
+    /**
+     * A conta não veio.
+     *
+     * Volta ao salão, que é o lugar de quem ficou sem conta para mostrar — mas
+     * só se o garçom ainda estiver esperando por ela. Uma falha de trinta
+     * segundos atrás não tira ninguém do teclado com o cartão do cliente já na
+     * maquininha.
+     */
+    fun semAContaQueNaoVeio(vez: Int, aviso: String?): Painel =
+        if (vez != vezDaConta || estado !is EstadoDaTela.Conta) this
+        else copy(estado = EstadoDaTela.Mesas, buscando = false, aviso = aviso)
 }
 
 /**
@@ -209,13 +262,14 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
     private val configuracao = RepositorioDeConfiguracao(contexto)
     private val api = Api(configuracao)
     /*
-   * A fila manda pela `api`, e traduz a recusa de turno para a linguagem dela.
-   *
-   * `PrecisaDoPin` quer dizer duas coisas no aparelho — o servidor recusou o
-   * crachá, ou nem havia crachá para mandar —, e para a fila as duas são a
-   * mesma: este pagamento espera a pessoa dele voltar, enquanto os outros
-   * seguem saindo.
-   */
+     * A fila manda pela `api`, e traduz a recusa de turno para a linguagem
+     * dela.
+     *
+     * `PrecisaDoPin` quer dizer duas coisas no aparelho — o servidor recusou
+     * o crachá, ou nem havia crachá para mandar —, e para a fila as duas são a
+     * mesma: este pagamento espera a pessoa dele voltar, enquanto os outros
+     * seguem saindo.
+     */
     private val envio = EnvioTeimoso(DepositoEmDisco(contexto)) { pagamento, cracha ->
         try {
             api.enviarPagamento(pagamento, cracha)
@@ -303,6 +357,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
             configuracao.esquecerOperador("o operador saiu pelo botão")
             _painel.update {
                 it.copy(estado = EstadoDaTela.PedindoPin, mesas = emptyList(), conta = null)
+                    .largandoAConta()
             }
         }
     }
@@ -448,22 +503,15 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
      * tela da conta ficava vazia e sem sinal de que ainda estava carregando.
      */
     private suspend fun carregarConta(comandaId: String) {
-        _painel.update {
-            it.copy(
-                estado = EstadoDaTela.Conta,
-                buscando = true,
-                conta = null,
-                aviso = null,
-                recado = null,
-            )
-        }
+        _painel.update { it.pedindoAConta(comandaId) }
+        val minhaVez = _painel.value.vezDaConta
         try {
             val conta = api.buscarConta(comandaId)
-            _painel.update { it.copy(conta = conta, comandaId = comandaId, buscando = false) }
+            _painel.update { it.comAContaQueChegou(minhaVez, conta) }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            _painel.update {
-                it.copy(estado = EstadoDaTela.Mesas, buscando = false, aviso = e.message)
-            }
+            _painel.update { it.semAContaQueNaoVeio(minhaVez, e.message) }
         }
     }
 
@@ -787,6 +835,7 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
     fun cobrancaAvulsa() {
         _painel.update {
             it.copy(estado = EstadoDaTela.Parada, comandaId = null, valorEmCentavos = 0, aviso = null)
+                .largandoAConta()
         }
     }
 
@@ -794,7 +843,8 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
     fun voltar() {
         _painel.update {
             when (it.estado) {
-                is EstadoDaTela.Conta -> it.copy(estado = EstadoDaTela.Mesas, conta = null)
+                is EstadoDaTela.Conta ->
+                    it.copy(estado = EstadoDaTela.Mesas, conta = null).largandoAConta()
                 /*
                  * O cardápio volta para a conta, que é o que o botão dele diz
                  * desde sempre: ele caía aqui no `else` e levava o garçom para
@@ -848,7 +898,10 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
     fun limpar() {
         val painel = _painel.value
         if (painel.estado is EstadoDaTela.Terminada && painel.comandaId != null) {
-            _painel.update { it.copy(valorEmCentavos = 0, conta = null, estado = EstadoDaTela.Mesas) }
+            _painel.update {
+                it.copy(valorEmCentavos = 0, conta = null, estado = EstadoDaTela.Mesas)
+                    .largandoAConta()
+            }
             viewModelScope.launch { buscarMesas() }
             return
         }
