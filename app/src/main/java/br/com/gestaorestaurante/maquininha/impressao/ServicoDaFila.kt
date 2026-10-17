@@ -16,6 +16,7 @@ import br.com.gestaorestaurante.maquininha.PlataformaAtual
 import br.com.gestaorestaurante.maquininha.R
 import br.com.gestaorestaurante.maquininha.api.Api
 import br.com.gestaorestaurante.maquininha.config.RepositorioDeConfiguracao
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -114,6 +115,16 @@ class ServicoDaFila : LifecycleService() {
                     resposta.trabalhos.size >= 20 -> 200L
                     else -> INTERVALO
                 }
+            } catch (e: CancellationException) {
+                /*
+                 * O serviço está morrendo, e não a rede falhando.
+                 *
+                 * Caía no `catch` de baixo: o `onDestroy` ainda escrevia
+                 * "Job was cancelled" na notificação — e mexer em notificação
+                 * de serviço que já está sendo desmontado é pedir para o
+                 * sistema reclamar.
+                 */
+                throw e
             } catch (e: Exception) {
                 /*
                  * A notificação cabe uma linha; o logcat cabe a causa. Sem

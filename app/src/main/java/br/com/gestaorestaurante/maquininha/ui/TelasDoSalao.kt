@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -34,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,7 +67,12 @@ import br.com.gestaorestaurante.maquininha.api.OpcionalDoCardapio
  */
 @Composable
 internal fun TelaDePin(painel: Painel, acoes: Acoes) {
-    var pin by remember { mutableStateOf("") }
+    /*
+     * `rememberSaveable`: mudar o tema para escuro, o tamanho da fonte ou o
+     * idioma refaz a Activity, e o que estava digitado sumia. O ViewModel
+     * sobrevive a isso; o estado da tela, não.
+     */
+    var pin by rememberSaveable { mutableStateOf("") }
 
     // PIN recusado limpa o campo, para o operador redigitar sem apagar à mão.
     LaunchedEffect(painel.falhasNoPin) {
@@ -394,18 +401,32 @@ internal fun TelaDaConta(painel: Painel, acoes: Acoes) {
             modifier = Modifier.weight(1f).fillMaxWidth(),
         ) {
             LazyColumn(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-                items(conta.itens) { item ->
+                /*
+                 * A chave com a posição de reserva: linha agrupada vem sem
+                 * `itemId`, e duas delas com o mesmo título derrubariam a
+                 * lista com chave repetida.
+                 */
+                itemsIndexed(
+                    conta.itens,
+                    key = { posicao, item -> item.itemId.ifBlank { "linha-" + posicao } },
+                ) { _, item ->
                     /*
                      * A linha é tocável: é o caminho para tirar o prato da
                      * conta. Sem indicação nenhuma seria um toque secreto, e
                      * com um botão por linha a conta de uma mesa cheia viraria
                      * uma coluna de botões — por isso o "×" discreto à direita,
                      * que só aparece onde o toque leva a algum lugar.
+                     *
+                     * Sem `itemId` a linha é só leitura — é o caso das linhas
+                     * que o servidor manda agrupadas, que não representam um
+                     * item só. Tocáveis, elas abriam a tela do motivo para um
+                     * cancelamento que ia falhar com o cliente na frente.
                      */
+                    val podeTirar = painel.podeCancelar && item.itemId.isNotBlank()
                     Row(
                         Modifier.fillMaxWidth()
                             .then(
-                                if (painel.podeCancelar) {
+                                if (podeTirar) {
                                     Modifier.clickable { acoes.irParaCancelamento(item) }
                                 } else {
                                     Modifier
@@ -421,7 +442,7 @@ internal fun TelaDaConta(painel: Painel, acoes: Acoes) {
                         Text(emReais(item.totalEmCentavos), fontSize = 14.sp)
                         // O sinal de que a linha leva a algum lugar. Discreto
                         // de propósito: o que o garçom lê nesta tela é a conta.
-                        if (painel.podeCancelar) {
+                        if (podeTirar) {
                             Text(
                                 " ×",
                                 fontSize = 14.sp,
@@ -670,7 +691,15 @@ internal fun TelaDoCardapio(painel: Painel, acoes: Acoes) {
                             modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
                         )
                     }
-                    items(categoria.itens, key = { it.cardapioItemId }) { item ->
+                    itemsIndexed(
+                        categoria.itens,
+                        // Mesma reserva: `cardapioItemId` vem com padrão
+                        // vazio, e o mesmo produto pode estar em duas
+                        // categorias.
+                        key = { posicao, item ->
+                            item.cardapioItemId.ifBlank { categoria.id + "-" + posicao }
+                        },
+                    ) { _, item ->
                         ItemNoCardapio(
                             item = item,
                             // Todas as linhas deste item: com escolhas, o mesmo

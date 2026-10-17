@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -564,13 +565,15 @@ private fun TelaDeResultado(painel: Painel, estado: EstadoDaTela.Terminada, acoe
 
 @Composable
 private fun TelaDeConfiguracao(painel: Painel, acoes: Acoes) {
-    var servidor by remember { mutableStateOf(painel.configuracao.servidor) }
+    // Sobrevive à Activity refeita (tema, fonte, idioma): o endereço longo
+    // não se redigita por causa de um toque nos ajustes do Android.
+    var servidor by rememberSaveable { mutableStateOf(painel.configuracao.servidor) }
     /*
      * O campo nasce vazio mesmo com token guardado: o que está no aparelho não
      * volta para a tela. Vazio quer dizer "deixa o que está lá", e é o normal
      * de quem veio aqui só para acertar o endereço do servidor.
      */
-    var token by remember { mutableStateOf("") }
+    var token by rememberSaveable { mutableStateOf("") }
     val jaTemToken = painel.configuracao.token.isNotBlank()
 
     Column(

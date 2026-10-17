@@ -1,7 +1,10 @@
 package br.com.gestaorestaurante.maquininha.api
 
 import br.com.gestaorestaurante.maquininha.config.RepositorioDeConfiguracao
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -9,6 +12,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import kotlin.coroutines.coroutineContext
 import java.util.concurrent.TimeUnit
 
 /**
@@ -97,8 +101,21 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
             .apply { if (corpo != null) post(corpo.toRequestBody(tipoJson)) else get() }
             .build()
 
+        /*
+     * A chamada morre com a corrotina.
+     *
+     * `execute()` é bloqueante: cancelar o escopo não cancelava nada, e a
+     * thread ficava presa até o timeout — vinte segundos de uma thread de
+     * E/S por chamada abandonada, com o garçom já em outra tela. Avisando o
+     * `Call`, o socket fecha na hora.
+     */
+        val chamada = cliente.newCall(requisicao)
+        val aviso = coroutineContext[Job]?.invokeOnCompletion { causa ->
+            if (causa != null) chamada.cancel()
+        }
+
         try {
-            cliente.newCall(requisicao).execute().use { resposta ->
+            chamada.execute().use { resposta ->
                 val texto = resposta.body?.string().orEmpty()
                 if (!resposta.isSuccessful) {
                     // A mensagem do servidor é escrita para a tela ("Falta
@@ -134,7 +151,26 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
                     }
                     throw FalhaNaApi(doServidor.ifBlank { "Servidor respondeu ${resposta.code}." })
                 }
-                leitura(texto)
+                /*
+                 * Resposta que não é deste sistema vira frase, não despejo.
+                 *
+                 * O portal de wi-fi do shopping responde 200 com a página
+                 * dele, e o `leitura` estourava com a exceção da
+                 * serialização: a tela do PIN mostrava "Unexpected JSON token
+                 * at offset 0" seguido do HTML inteiro, em vermelho, na frente
+                 * do cliente.
+                 */
+                try {
+                    leitura(texto)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    throw FalhaNaApi(
+                        "O servidor respondeu algo que não é deste sistema. " +
+                            "Confira o endereço nos Ajustes — e a rede, se for wi-fi de portal.",
+                        e,
+                    )
+                }
             }
         } catch (e: FalhaNaApi) {
             throw e
@@ -143,7 +179,12 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
         } catch (e: PrecisaDoPin) {
             throw e
         } catch (e: IOException) {
+            // Chamada cancelada chega aqui como IOException("Canceled"): quem
+            // desistiu foi a tela, e não há o que avisar a ninguém.
+            coroutineContext.ensureActive()
             throw FalhaNaApi("Sem resposta do servidor.", e)
+        } finally {
+            aviso?.dispose()
         }
     }
 

@@ -504,10 +504,6 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
             _painel.update { it.copy(configuracao = config, estado = primeiraTela(config)) }
             if (config.completa) {
                 ServicoDaFila.ligar(contexto)
-                // Pagamento que ficou preso numa queda de rede sai agora, antes
-                // de qualquer venda nova.
-                envio.escoar()
-                _painel.update { it.copy(pendentesDeEnvio = envio.quantasPendentes()) }
                 if (config.comOperador) buscarMesas()
             }
             prepararProvedor()
@@ -516,6 +512,20 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
             configuracao.fluxo.collect { config ->
                 _painel.update { it.copy(configuracao = config) }
             }
+        }
+        /*
+         * O escoamento abre em corrotina própria.
+         *
+         * Vinha antes do salão e do provedor, na mesma fila: com a rede ruim e
+         * três pagamentos presos, cada um gastava até dez segundos de conexão
+         * e o garçom ficava olhando um salão vazio — sem sinal de carga e com
+         * a credenciadora ainda "não pronta" — por meio minuto. Ninguém está
+         * esperando esse envio; quem espera é o salão.
+         */
+        viewModelScope.launch {
+            if (!configuracao.atual().completa) return@launch
+            escoarPendentes()
+            _painel.update { it.copy(pendentesDeEnvio = envio.quantasPendentes()) }
         }
     }
 
