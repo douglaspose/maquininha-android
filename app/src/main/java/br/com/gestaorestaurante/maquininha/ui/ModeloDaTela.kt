@@ -1,6 +1,7 @@
 package br.com.gestaorestaurante.maquininha.ui
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import br.com.gestaorestaurante.maquininha.PlataformaAtual
@@ -24,10 +25,13 @@ import br.com.gestaorestaurante.maquininha.impressao.lerConteudoDaFila
 import br.com.gestaorestaurante.maquininha.impressao.paraLargura
 import br.com.gestaorestaurante.maquininha.pagamento.AndamentoDaCobranca
 import br.com.gestaorestaurante.maquininha.pagamento.Cobranca
+import br.com.gestaorestaurante.maquininha.pagamento.DepositoEmDisco
 import br.com.gestaorestaurante.maquininha.pagamento.EnvioTeimoso
+import br.com.gestaorestaurante.maquininha.pagamento.TurnoVencido
 import br.com.gestaorestaurante.maquininha.pagamento.FormaDePagamento
 import br.com.gestaorestaurante.maquininha.pagamento.ResultadoDaCobranca
 import br.com.gestaorestaurante.maquininha.pagamento.TransacaoAprovada
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -204,7 +208,21 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
     private val contexto = aplicacao.applicationContext
     private val configuracao = RepositorioDeConfiguracao(contexto)
     private val api = Api(configuracao)
-    private val envio = EnvioTeimoso(contexto, api)
+    /*
+   * A fila manda pela `api`, e traduz a recusa de turno para a linguagem dela.
+   *
+   * `PrecisaDoPin` quer dizer duas coisas no aparelho — o servidor recusou o
+   * crachá, ou nem havia crachá para mandar —, e para a fila as duas são a
+   * mesma: este pagamento espera a pessoa dele voltar, enquanto os outros
+   * seguem saindo.
+   */
+    private val envio = EnvioTeimoso(DepositoEmDisco(contexto)) { pagamento, cracha ->
+        try {
+            api.enviarPagamento(pagamento, cracha)
+        } catch (e: Api.PrecisaDoPin) {
+            throw TurnoVencido(e.message ?: "Turno vencido.")
+        }
+    }
     private val provedor = PlataformaAtual.pagamento(contexto)
     private val impressora = PlataformaAtual.impressora(contexto)
 
@@ -297,6 +315,15 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         _painel.update { it.copy(buscando = true) }
         try {
             val resposta = api.buscarMesas()
+            /*
+             * O salão respondeu, então a rede voltou: é a hora de escoar o que
+             * ficou para trás. Antes isso só acontecia na abertura do
+             * aplicativo, e a maquininha fica aberta a noite inteira — um
+             * pagamento que caiu na fila às nove da noite esperava alguém
+             * reiniciar o aparelho, enquanto a tela prometia que ele sairia
+             * sozinho quando a rede voltasse.
+             */
+            escoarPendentes()
             _painel.update {
                 it.copy(
                     mesas = resposta.mesas,
@@ -387,6 +414,25 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                     it.copy(buscando = false, aviso = e.message ?: "Não foi possível abrir a mesa.")
                 }
             }
+        }
+    }
+
+    /**
+     * Manda o que ficou para trás e atualiza o contador da tela.
+     *
+     * Silencioso de propósito: falhar aqui não é novidade para quem está
+     * olhando — a tela já mostra quantos estão esperando, e o escoamento tenta
+     * de novo na próxima resposta do salão.
+     */
+    private suspend fun escoarPendentes() {
+        try {
+            if (envio.escoar() > 0) {
+                _painel.update { it.copy(pendentesDeEnvio = envio.quantasPendentes()) }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("Maquininha", "não deu para escoar os pendentes agora: ${e.message}")
         }
     }
 
@@ -904,13 +950,27 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
             bandeira = aprovada.bandeira,
         )
 
-        return try {
-            val resposta = api.enviarPagamento(pagamento)
+        /*
+         * Tudo passa pela fila, inclusive a primeira tentativa.
+         *
+         * Antes, a primeira ia direto pela `api` e só a falha caía na fila —
+         * e era justamente nessa primeira, com a rede ruim, que o aplicativo
+         * fechado levava junto um pagamento já aprovado no cartão. Agora ele
+         * está em disco antes de qualquer chamada: o pior caso virou sair duas
+         * vezes para o servidor, que reconhece a referência e não duplica.
+         */
+        /*
+         * O crachá de agora vai junto com o pagamento: é quem está cobrando.
+         * Se a rede só voltar no turno seguinte, a venda entra no servidor no
+         * nome de quem passou o cartão, e não de quem estiver com o aparelho.
+         */
+        val resposta = envio.enviar(pagamento, configuracao.atual().operador)
+        return if (resposta == null) {
+            // Ficou na fila: a tela avisa, porque a conta continua aberta no
+            // salão até o escoamento conseguir.
+            Contado(enviado = false)
+        } else {
             Contado(enviado = true, quitou = resposta.quitada, falta = resposta.faltaEmCentavos)
-        } catch (e: Exception) {
-            // Não deu agora: fica na fila em disco e sai quando a rede voltar.
-            // A tela avisa, porque a conta continua aberta no salão até lá.
-            Contado(enviado = envio.enviar(pagamento))
         }
     }
 

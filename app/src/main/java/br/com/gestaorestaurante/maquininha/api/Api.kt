@@ -72,18 +72,28 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
         caminho: String,
         corpo: String? = null,
         comOperador: Boolean = false,
+        /**
+         * O crachá de um turno que não é o de agora.
+         *
+         * Serve ao pagamento que ficou na fila: ele sai com o crachá de quem
+         * cobrou, e não de quem estiver no aparelho na hora em que a rede
+         * voltar — senão a venda entra no nome da pessoa errada, e é por esse
+         * nome que a casa confere o caixa no fim do turno.
+         */
+        crachaDeOutroTurno: String? = null,
         leitura: (String) -> T,
     ): T = withContext(Dispatchers.IO) {
         val config = configuracao.atual()
         if (!config.completa) throw FalhaNaApi("Aparelho sem servidor ou token configurado.")
-        if (comOperador && !config.comOperador) {
+        val cracha = crachaDeOutroTurno ?: config.operador
+        if (comOperador && cracha.isBlank()) {
             throw PrecisaDoPin("Digite o PIN para começar.", recusadoPeloServidor = false)
         }
 
         val requisicao = Request.Builder()
             .url(config.servidor + caminho)
             .header("Authorization", "Bearer ${config.token}")
-            .apply { if (comOperador) header("X-Operador", config.operador) }
+            .apply { if (comOperador) header("X-Operador", cracha) }
             .apply { if (corpo != null) post(corpo.toRequestBody(tipoJson)) else get() }
             .build()
 
@@ -302,9 +312,18 @@ class Api(private val configuracao: RepositorioDeConfiguracao) {
      * novo. Quem chama insiste até conseguir — veja `EnvioTeimoso`. Reenviar
      * é seguro: a referência faz o servidor reconhecer o mesmo pagamento.
      */
-    suspend fun enviarPagamento(pagamento: PagamentoParaEnviar): RespostaDoPagamento {
+    suspend fun enviarPagamento(
+        pagamento: PagamentoParaEnviar,
+        /** O crachá de quem cobrou, quando o pagamento vem da fila. */
+        cracha: String? = null,
+    ): RespostaDoPagamento {
         val corpo = json.encodeToString(PagamentoParaEnviar.serializer(), pagamento)
-        return chamar("/api/maquininha/pagamentos", corpo, comOperador = true) {
+        return chamar(
+            "/api/maquininha/pagamentos",
+            corpo,
+            comOperador = true,
+            crachaDeOutroTurno = cracha,
+        ) {
             json.decodeFromString(RespostaDoPagamento.serializer(), it)
         }
     }
