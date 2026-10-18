@@ -78,6 +78,16 @@ data class PendenteDeEnvio(
      * dela a noite toda.
      */
     val recusa: String? = null,
+    /**
+     * Quando e por quem foi cobrada.
+     *
+     * Só servem à tela das recusadas: para a casa achar a venda no extrato da
+     * adquirente, o que ela procura é a hora e o valor, e o nome diz a quem
+     * perguntar o que aconteceu. Zerados nos pendentes guardados antes desta
+     * versão — a lista mostra o que tem.
+     */
+    val cobradaEm: Long = 0,
+    val operadorNome: String = "",
 )
 
 /**
@@ -159,8 +169,19 @@ class EnvioTeimoso(
      * pagamento ficou na fila — aí a conta segue aberta no salão até o
      * escoamento conseguir.
      */
-    suspend fun enviar(pagamento: PagamentoParaEnviar, cracha: String): RespostaDoPagamento? {
-        val pendente = PendenteDeEnvio(pagamento, cracha)
+    suspend fun enviar(
+        pagamento: PagamentoParaEnviar,
+        cracha: String,
+        /** Para a tela das recusadas saber a quem perguntar. */
+        operadorNome: String = "",
+        agoraEmMillis: Long = System.currentTimeMillis(),
+    ): RespostaDoPagamento? {
+        val pendente = PendenteDeEnvio(
+            pagamento = pagamento,
+            cracha = cracha,
+            cobradaEm = agoraEmMillis,
+            operadorNome = operadorNome,
+        )
         guardar(pendente)
         return tentar(pendente)
     }
@@ -260,6 +281,29 @@ class EnvioTeimoso(
 
     /** Quantas o servidor recusou de vez, e estão guardadas esperando a casa resolver. */
     suspend fun quantasRecusadas(): Int = deposito.ler().count { it.recusa != null }
+
+    /** As recusadas, da mais nova para a mais velha, como a tela as mostra. */
+    suspend fun recusadas(): List<PendenteDeEnvio> =
+        deposito.ler().filter { it.recusa != null }.sortedByDescending { it.cobradaEm }
+
+    /**
+     * A casa resolveu esta na retaguarda: pode sair do aparelho.
+     *
+     * Só sai o que está recusado. Pendente não some por engano daqui — ele
+     * ainda vai ser enviado, e apagá-lo seria jogar fora dinheiro que o
+     * servidor nunca soube que entrou.
+     */
+    suspend fun darBaixa(referencia: String) {
+        withContext(NonCancellable) {
+            tranca.withLock {
+                deposito.gravar(
+                    deposito.ler().filterNot {
+                        it.pagamento.referencia == referencia && it.recusa != null
+                    }
+                )
+            }
+        }
+    }
 
     /**
      * Marca a venda como recusada sem tirá-la do disco.

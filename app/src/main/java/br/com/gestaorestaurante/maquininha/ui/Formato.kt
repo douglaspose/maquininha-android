@@ -81,3 +81,24 @@ fun esperaDesde(iso: String, agoraEmMillis: Long = System.currentTimeMillis()): 
  */
 fun quantidade(q: Double): String =
     if (q == q.toLong().toDouble()) q.toLong().toString() else q.toString().replace('.', ',')
+
+/**
+ * Um formatador de hora por thread, pelo mesmo motivo do de cima.
+ *
+ * No fuso do aparelho de propósito: quem lê esta hora é a casa, conferindo
+ * contra o extrato da adquirente, e os dois estão no mesmo relógio.
+ */
+private val FORMATO_DA_HORA = object : ThreadLocal<java.text.SimpleDateFormat>() {
+    override fun initialValue() =
+        java.text.SimpleDateFormat("HH'h'mm", java.util.Locale.US)
+}
+
+/**
+ * A hora de uma venda: "20h47".
+ *
+ * Zero é "sem hora": pagamento guardado por uma versão do aplicativo que ainda
+ * não anotava quando a cobrança aconteceu. A lista mostra o que tem, em vez de
+ * inventar uma hora ou esconder a venda.
+ */
+fun horaDe(millis: Long): String =
+    if (millis <= 0) "sem hora" else FORMATO_DA_HORA.get()!!.format(java.util.Date(millis))

@@ -204,6 +204,30 @@ internal fun TelaDeMesas(painel: Painel, acoes: Acoes) {
             TextButton(onClick = acoes.sairDoTurno) { Text("Sair") }
         }
 
+        /*
+         * A porta das recusadas fica aqui, e não só no contador do cabeçalho.
+         *
+         * O contador diz que existe; esta linha leva até elas. É a única coisa
+         * no aparelho que ninguém resolve sozinho — o dinheiro saiu do cartão e
+         * o sistema não sabe —, então ela aparece no salão, onde o caixa passa
+         * a noite inteira.
+         */
+        if (painel.recusadasPeloServidor > 0) {
+            Surface(
+                onClick = acoes.verRecusadas,
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "${painel.recusadasPeloServidor} venda(s) recusada(s) pelo servidor · ver",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                )
+            }
+        }
         // O caixa fechado é problema de quem vai cobrar; para o garçom, é um
         // alarme vermelho sobre algo que ele não resolve nem precisa.
         if (!painel.caixaAberto && painel.podeReceber) {
@@ -402,6 +426,7 @@ internal fun TelaDaConta(painel: Painel, acoes: Acoes) {
          */
         painel.aviso?.let { Aviso(it, MaterialTheme.colorScheme.error) }
         painel.recado?.let { Aviso(it, MaterialTheme.colorScheme.primary) }
+
 
         Surface(
             color = MaterialTheme.colorScheme.surface,

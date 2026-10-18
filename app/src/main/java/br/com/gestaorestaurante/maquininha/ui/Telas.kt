@@ -14,11 +14,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -82,6 +85,7 @@ fun Tela(painel: Painel, acoes: Acoes) {
         is EstadoDaTela.Cobrando ->
             TelaDeAndamento(painel.estado.mensagem, "Siga as instruções no visor")
         is EstadoDaTela.Terminada -> TelaDeResultado(painel, painel.estado, acoes)
+        is EstadoDaTela.Recusadas -> TelaDasRecusadas(painel, acoes)
         is EstadoDaTela.Parada -> TelaDeCobranca(painel, acoes)
     }
 }
@@ -120,6 +124,10 @@ class Acoes(
     val anotarObservacao: (String, String) -> Unit,
     val cobrarDaConta: (Boolean) -> Unit,
     val cobrancaAvulsa: () -> Unit,
+    /** Abre a lista das vendas que o servidor recusou de vez. */
+    val verRecusadas: () -> Unit,
+    /** A casa resolveu aquela na retaguarda: tira do aparelho. */
+    val darBaixaNaRecusada: (String) -> Unit,
     val sairDosAjustes: () -> Unit,
     val voltar: () -> Unit,
     /** O botão de baixo do Android, que cada tela resolve do seu jeito. */
@@ -650,6 +658,122 @@ private fun TelaDeConfiguracao(painel: Painel, acoes: Acoes) {
         if (painel.configuracao.completa) {
             TextButton(onClick = acoes.sairDosAjustes, modifier = Modifier.fillMaxWidth()) {
                 Text("Voltar")
+            }
+        }
+    }
+}
+
+/**
+ * As vendas que o servidor recusou de vez.
+ *
+ * O cartão do cliente foi debitado e o sistema não tem o registro: o aparelho
+ * não tem o que fazer com isso sozinho. Esta tela existe para alguém na
+ * retaguarda conferir o extrato da adquirente contra esta lista — por isso ela
+ * mostra o que se procura num extrato: valor, hora, bandeira e NSU — e, depois
+ * de acertar lá, dar baixa aqui.
+ *
+ * A baixa pede confirmação porque é a única ação do aparelho que apaga a
+ * memória de um dinheiro que entrou: depois dela, só o comprovante de papel e
+ * o extrato contam a história.
+ */
+@Composable
+private fun TelaDasRecusadas(painel: Painel, acoes: Acoes) {
+    var baixando by rememberSaveable { mutableStateOf<String?>(null) }
+
+    baixando?.let { referencia ->
+        val venda = painel.recusadas.firstOrNull { it.pagamento.referencia == referencia }
+        AlertDialog(
+            onDismissRequest = { baixando = null },
+            title = { Text("Dar baixa nesta venda?") },
+            text = {
+                Text(
+                    "Ela sai do aparelho. Faça isto depois de registrar " +
+                        (venda?.let { emReais(it.pagamento.valorEmCentavos) } ?: "a venda") +
+                        " no sistema pela retaguarda — o comprovante e o extrato da " +
+                        "adquirente passam a ser a única prova dela."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    acoes.darBaixaNaRecusada(referencia)
+                    baixando = null
+                }) { Text("Dar baixa") }
+            },
+            dismissButton = {
+                TextButton(onClick = { baixando = null }) { Text("Voltar") }
+            },
+        )
+    }
+
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = acoes.voltar) { Text("← Mesas") }
+            Spacer(Modifier.weight(1f))
+            Text("Recusadas", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Text(
+            "O servidor não aceitou estas vendas, e o cartão do cliente foi " +
+                "debitado. Registre cada uma pela retaguarda e dê baixa aqui.",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        painel.aviso?.let { Aviso(it, MaterialTheme.colorScheme.error) }
+
+        LazyColumn(
+            Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(painel.recusadas, key = { it.pagamento.referencia }) { venda ->
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                emReais(venda.pagamento.valorEmCentavos),
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                horaDe(venda.cobradaEm),
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        // O que se procura num extrato da adquirente.
+                        Text(
+                            buildString {
+                                venda.pagamento.bandeira?.let { append(it).append(" · ") }
+                                append(venda.pagamento.nsu ?: "sem NSU")
+                                if (venda.operadorNome.isNotBlank()) {
+                                    append(" · ").append(venda.operadorNome)
+                                }
+                            },
+                            fontSize = 13.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            venda.recusa.orEmpty(),
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                        TextButton(
+                            onClick = { baixando = venda.pagamento.referencia },
+                            modifier = Modifier.padding(top = 2.dp),
+                        ) { Text("Dar baixa") }
+                    }
+                }
             }
         }
     }

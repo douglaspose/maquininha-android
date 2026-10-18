@@ -1,7 +1,9 @@
 package br.com.gestaorestaurante.maquininha
 
 import br.com.gestaorestaurante.maquininha.ui.esperaDesde
+import br.com.gestaorestaurante.maquininha.ui.horaDe
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
@@ -69,5 +71,21 @@ class EsperaConcorrenteTest {
     fun `data que nao da para ler continua devolvendo nulo`() {
         assertEquals(null, esperaDesde("ontem de noite"))
         assertEquals(null, esperaDesde(""))
+    }
+
+    /**
+     * A hora da venda recusada, que a casa confere contra o extrato. Sem hora
+     * é o pagamento guardado por uma versão que ainda não a anotava: a lista
+     * mostra o que tem, em vez de inventar.
+     */
+    @Test
+    fun `a hora da venda sai no formato do extrato, e sem hora quando nao ha`() {
+        assertEquals("sem hora", horaDe(0))
+        assertEquals("sem hora", horaDe(-1))
+
+        val hora = horaDe(1792280985235L)
+        assertEquals(5, hora.length)
+        assertEquals('h', hora[2])
+        assertTrue(hora.filter { it.isDigit() }.length == 4)
     }
 }

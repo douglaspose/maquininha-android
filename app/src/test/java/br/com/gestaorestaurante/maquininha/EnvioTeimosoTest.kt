@@ -360,4 +360,72 @@ class EnvioTeimosoTest {
         assertEquals(listOf("venda-recusada"), deposito.referencias)
         assertEquals(1, envio.quantasRecusadas())
     }
+// --- a lista das recusadas, e a baixa ---
+
+    /**
+     * A tela das recusadas existe para a casa conferir contra o extrato da
+     * adquirente: o que ela precisa é a venda mais nova em cima, com valor,
+     * hora, NSU e o nome de quem cobrou.
+     */
+    @Test
+    fun `a lista traz so as recusadas, da mais nova para a mais velha`() = runTest {
+        val deposito = DepositoDeTeste()
+        deposito.fila = listOf(
+            pendente("venda-velha").copy(recusa = "Conta não encontrada.", cobradaEm = 1_000),
+            pendente("venda-pendente"),
+            pendente("venda-nova").copy(recusa = "Valor alto demais.", cobradaEm = 9_000),
+        )
+        val envio = EnvioTeimoso(deposito) { _, _ -> recebido }
+
+        val lista = envio.recusadas()
+
+        assertEquals(listOf("venda-nova", "venda-velha"), lista.map { it.pagamento.referencia })
+        assertEquals("Valor alto demais.", lista[0].recusa)
+    }
+
+    @Test
+    fun `a cobranca guarda quem cobrou e quando`() = runTest {
+        val deposito = DepositoDeTeste()
+        val envio = EnvioTeimoso(deposito) { _, _ ->
+            throw RecusaDefinitiva("O servidor recusou esta venda (400).")
+        }
+
+        envio.enviar(pagamento("venda-18"), "cracha", operadorNome = "Pajé", agoraEmMillis = 7_777)
+
+        val recusada = envio.recusadas().single()
+        assertEquals("Pajé", recusada.operadorNome)
+        assertEquals(7_777, recusada.cobradaEm)
+    }
+
+    /** Resolvida na retaguarda, ela sai do aparelho. */
+    @Test
+    fun `dar baixa tira a recusada da fila`() = runTest {
+        val deposito = DepositoDeTeste()
+        deposito.fila = listOf(
+            pendente("venda-19").copy(recusa = "Conta não encontrada."),
+            pendente("venda-20").copy(recusa = "Valor alto demais."),
+        )
+        val envio = EnvioTeimoso(deposito) { _, _ -> recebido }
+
+        envio.darBaixa("venda-19")
+
+        assertEquals(listOf("venda-20"), deposito.referencias)
+        assertEquals(1, envio.quantasRecusadas())
+    }
+
+    /**
+     * Pendente não some por engano: ela ainda vai ser enviada, e apagá-la
+     * daqui seria jogar fora dinheiro que o servidor nunca soube que entrou.
+     */
+    @Test
+    fun `dar baixa nao apaga uma venda que ainda espera a rede`() = runTest {
+        val deposito = DepositoDeTeste()
+        deposito.fila = listOf(pendente("venda-21"))
+        val envio = EnvioTeimoso(deposito) { _, _ -> recebido }
+
+        envio.darBaixa("venda-21")
+
+        assertEquals(listOf("venda-21"), deposito.referencias)
+        assertEquals(1, envio.quantasPendentes())
+    }
 }

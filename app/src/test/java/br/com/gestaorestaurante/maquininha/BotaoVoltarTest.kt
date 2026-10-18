@@ -54,6 +54,7 @@ class BotaoVoltarTest {
         assertEquals(AcaoDoBack.TELA_ANTERIOR, em(EstadoDaTela.EscolhendoDestino))
         assertEquals(AcaoDoBack.TELA_ANTERIOR, em(EstadoDaTela.Cancelando))
         assertEquals(AcaoDoBack.TELA_ANTERIOR, em(EstadoDaTela.Parada))
+        assertEquals(AcaoDoBack.TELA_ANTERIOR, em(EstadoDaTela.Recusadas))
     }
 
     /** A tela do resultado se encerra como o botão dela: venda encerrada. */

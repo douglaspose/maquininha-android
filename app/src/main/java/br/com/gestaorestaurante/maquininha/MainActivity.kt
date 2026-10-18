@@ -66,6 +66,8 @@ class MainActivity : ComponentActivity() {
                             cobrar = modelo::cobrar,
                             configurar = modelo::configurar,
                             abrirConfiguracao = modelo::abrirConfiguracao,
+                            verRecusadas = modelo::verRecusadas,
+                            darBaixaNaRecusada = modelo::darBaixaNaRecusada,
                             sairDosAjustes = modelo::sairDosAjustes,
                             voltarPeloSistema = modelo::voltarPeloSistema,
                             entrarComPin = modelo::entrarComPin,

@@ -29,6 +29,7 @@ import br.com.gestaorestaurante.maquininha.pagamento.AndamentoDaCobranca
 import br.com.gestaorestaurante.maquininha.pagamento.Cobranca
 import br.com.gestaorestaurante.maquininha.pagamento.DepositoEmDisco
 import br.com.gestaorestaurante.maquininha.pagamento.EnvioTeimoso
+import br.com.gestaorestaurante.maquininha.pagamento.PendenteDeEnvio
 import br.com.gestaorestaurante.maquininha.pagamento.EsperaACasa
 import br.com.gestaorestaurante.maquininha.pagamento.RecusaDefinitiva
 import br.com.gestaorestaurante.maquininha.pagamento.TurnoVencido
@@ -87,6 +88,16 @@ sealed interface EstadoDaTela {
 
     /** Tirar um item da conta: o motivo, e o PIN de quem pode, se precisar. */
     data object Cancelando : EstadoDaTela
+
+    /**
+     * As vendas que o servidor recusou de vez, para a casa resolver.
+     *
+     * Existe porque o aparelho não tem o que fazer com elas sozinho: o cartão
+     * do cliente foi debitado e o sistema não tem o registro. Quem resolve é
+     * alguém na retaguarda, com o extrato da adquirente de um lado e esta
+     * lista do outro — e depois dá baixa aqui.
+     */
+    data object Recusadas : EstadoDaTela
 
     /** O teclado do valor. Vem de uma conta, ou da cobrança avulsa. */
     data object Parada : EstadoDaTela
@@ -150,6 +161,9 @@ internal fun acaoDoBack(painel: Painel): AcaoDoBack = when (painel.estado) {
 
     is EstadoDaTela.Terminada -> AcaoDoBack.ENCERRAR_VENDA
 
+    // A lista das recusadas é uma consulta: sair dela é voltar ao salão.
+    is EstadoDaTela.Recusadas -> AcaoDoBack.TELA_ANTERIOR
+
     else -> AcaoDoBack.TELA_ANTERIOR
 }
 
@@ -203,6 +217,8 @@ data class Painel(
     val forma: FormaDePagamento = FormaDePagamento.CREDITO,
     val parcelas: Int = 1,
     val pendentesDeEnvio: Int = 0,
+    /** As recusadas em si, quando a tela delas está aberta. */
+    val recusadas: List<PendenteDeEnvio> = emptyList(),
     /**
      * Vendas que o servidor recusou de vez e que ninguém resolveu ainda.
      *
@@ -720,6 +736,63 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
         }
     }
 
+    /**
+     * Abre a lista das vendas que o servidor recusou de vez.
+     *
+     * A lista vem do disco a cada abertura, e não de um cache: ela muda quando
+     * o escoamento marca uma nova, e o que a casa não pode é olhar para uma
+     * lista velha enquanto confere o extrato.
+     */
+    fun verRecusadas() {
+        viewModelScope.launch {
+            val lista = try {
+                envio.recusadas()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("Maquininha", "não deu para ler as recusadas: ${e.message}", e)
+                emptyList()
+            }
+            _painel.update {
+                it.copy(
+                    estado = EstadoDaTela.Recusadas,
+                    recusadas = lista,
+                    recusadasPeloServidor = lista.size,
+                    aviso = null,
+                    recado = null,
+                )
+            }
+        }
+    }
+
+    /**
+     * A casa resolveu esta na retaguarda: tira do aparelho.
+     *
+     * Sem a lista vazia virar tela vazia: resolvida a última, volta para o
+     * salão, que é de onde se veio.
+     */
+    fun darBaixaNaRecusada(referencia: String) {
+        viewModelScope.launch {
+            try {
+                envio.darBaixa(referencia)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _painel.update { it.copy(aviso = e.message ?: "Não foi possível dar baixa.") }
+                return@launch
+            }
+            val lista = envio.recusadas()
+            _painel.update {
+                it.copy(
+                    estado = if (lista.isEmpty()) EstadoDaTela.Mesas else EstadoDaTela.Recusadas,
+                    recusadas = lista,
+                    recusadasPeloServidor = lista.size,
+                    recado = "Venda baixada do aparelho.",
+                )
+            }
+        }
+    }
+
     /** Abre a conta de uma mesa: itens, o que já foi pago e o que falta. */
     fun abrirConta(comandaId: String) {
         viewModelScope.launch { carregarConta(comandaId) }
@@ -1097,6 +1170,8 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
             when (it.estado) {
                 is EstadoDaTela.Conta ->
                     it.copy(estado = EstadoDaTela.Mesas, conta = null).largandoAConta()
+                is EstadoDaTela.Recusadas ->
+                    it.copy(estado = EstadoDaTela.Mesas, recusadas = emptyList())
                 /*
                  * O cardápio volta para a conta, que é o que o botão dele diz
                  * desde sempre: ele caía aqui no `else` e levava o garçom para
@@ -1353,7 +1428,8 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
          * Se a rede só voltar no turno seguinte, a venda entra no servidor no
          * nome de quem passou o cartão, e não de quem estiver com o aparelho.
          */
-        val resposta = envio.enviar(pagamento, configuracao.atual().operador)
+        val config = configuracao.atual()
+        val resposta = envio.enviar(pagamento, config.operador, config.operadorNome)
         return if (resposta == null) {
             // Ficou na fila: a tela avisa, porque a conta continua aberta no
             // salão até o escoamento conseguir.
