@@ -1,5 +1,6 @@
 package br.com.gestaorestaurante.maquininha
 
+import br.com.gestaorestaurante.maquininha.api.Api
 import br.com.gestaorestaurante.maquininha.api.TrabalhoDeImpressao
 import br.com.gestaorestaurante.maquininha.impressao.Cupom
 import br.com.gestaorestaurante.maquininha.impressao.LoteDeImpressao
@@ -150,6 +151,60 @@ class LoteDeImpressaoTest {
         assertTrue(feito.interrompido)
         // Só o primeiro saiu no papel: os outros nem foram tentados.
         assertEquals(1, impressos)
+        assertEquals(0, feito.impressos)
+    }
+
+    /**
+     * A baixa recusada, que é o que o servidor passou a responder.
+     *
+     * A fila entrega cada papel a um aparelho só, e a baixa é de quem levou.
+     * Se a reserva vencer no meio de uma impressão demorada, outro leva o
+     * trabalho e imprime também; a confirmação deste chega depois da dele e
+     * volta 409.
+     *
+     * Insistir não muda a resposta, e parar o lote por causa dela deixaria a
+     * cozinha sem as comandas de trás — que é o erro que este arquivo existe
+     * para prender, na outra forma dele.
+     */
+    @Test
+    fun `baixa recusada nao para o lote, e nao conta como papel que nao saiu`() = runTest {
+        var tentativas = 0
+        var impressos = 0
+        val lote = LoteDeImpressao(
+            montar = { papel },
+            imprimir = { impressos++; null },
+            confirmar = { id, _, _ ->
+                tentativas++
+                if (id == "t1") throw Api.RegraDaCasa("Este papel foi entregue a outro aparelho.")
+            },
+        )
+
+        val feito = lote.rodar(listOf(trabalho("t1"), trabalho("t2")))
+
+        assertEquals(false, feito.interrompido)
+        // Os dois saíram no papel; só a baixa do primeiro foi recusada.
+        assertEquals(2, impressos)
+        assertEquals(1, feito.impressos)
+        assertEquals(1, feito.recusadas)
+        // E não é falha de impressora: ninguém precisa ir olhar a bobina.
+        assertEquals(0, feito.comErro)
+        // Sem insistir: duas confirmações, uma por trabalho.
+        assertEquals(2, tentativas)
+    }
+
+    /** 404 é trabalho que não existe mais: mesma conversa, mesmo desfecho. */
+    @Test
+    fun `trabalho que o servidor nao conhece mais tambem nao para o lote`() = runTest {
+        val lote = LoteDeImpressao(
+            montar = { papel },
+            imprimir = { null },
+            confirmar = { _, _, _ -> throw Api.RecusadoPeloServidor("Trabalho não encontrado.", 404) },
+        )
+
+        val feito = lote.rodar(listOf(trabalho("t1"), trabalho("t2")))
+
+        assertEquals(false, feito.interrompido)
+        assertEquals(2, feito.recusadas)
         assertEquals(0, feito.impressos)
     }
 }

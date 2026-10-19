@@ -102,6 +102,11 @@ class ServicoDaFila : LifecycleService() {
                         // comanda que a cozinha não viu, e alguém no salão
                         // precisa ir olhar a impressora.
                         feito.comErro > 0 -> "${feito.impressos} impressos, ${feito.comErro} com erro"
+                        // Baixa recusada não é impressora com problema: é papel
+                        // que já era de outro aparelho. Dizer "com erro" aqui
+                        // mandaria alguém olhar uma bobina que está boa.
+                        feito.recusadas > 0 ->
+                            "${feito.impressos} impressos, ${feito.recusadas} de outro aparelho"
                         else -> "${feito.impressos} impressos"
                     }
                 )

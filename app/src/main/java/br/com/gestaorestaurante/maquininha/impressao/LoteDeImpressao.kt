@@ -1,5 +1,6 @@
 package br.com.gestaorestaurante.maquininha.impressao
 
+import br.com.gestaorestaurante.maquininha.api.Api
 import br.com.gestaorestaurante.maquininha.api.TrabalhoDeImpressao
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -35,6 +36,20 @@ class LoteDeImpressao(
         val impressos: Int = 0,
         val comErro: Int = 0,
         /**
+         * O servidor recusou a baixa: o papel já era de outro aparelho.
+         *
+         * A fila entrega cada trabalho a um só, e a baixa é de quem levou. Se
+         * a reserva vencer no meio de uma impressão demorada, outro aparelho
+         * leva o trabalho e imprime também — de propósito, papel que não saiu
+         * merece outra chance —, e a confirmação deste chega depois da dele.
+         *
+         * Não é falha de rede e não é papel que não saiu: insistir não muda a
+         * resposta, e parar o lote por causa dela atrasaria as comandas que
+         * vêm atrás. Conta aqui para aparecer na notificação de quem está com
+         * o aparelho na mão, e o lote segue.
+         */
+        val recusadas: Int = 0,
+        /**
          * A rede caiu no meio: o que sobrou do lote nem foi tentado.
          *
          * De propósito. Sem conseguir confirmar, o servidor vai reentregar o
@@ -47,6 +62,7 @@ class LoteDeImpressao(
     suspend fun rodar(trabalhos: List<TrabalhoDeImpressao>): Resultado {
         var impressos = 0
         var comErro = 0
+        var recusadas = 0
 
         for (trabalho in trabalhos) {
             val falha = tentar(trabalho)
@@ -55,16 +71,24 @@ class LoteDeImpressao(
              * A confirmação é o que tira o trabalho da fila do servidor. Ela
              * insiste algumas vezes porque um soluço de rede aqui custa papel
              * repetido na cozinha — e se nem assim for, o lote para.
+             *
+             * Recusa é outra coisa: o servidor respondeu, e respondeu que
+             * esta baixa não é deste aparelho. Insistir não muda, e parar
+             * seria deixar a cozinha sem as comandas de trás.
              */
-            if (!confirmarTeimoso(trabalho.id, ok = falha == null, erro = falha)) {
-                return Resultado(impressos, comErro, interrompido = true)
+            when (confirmarTeimoso(trabalho.id, ok = falha == null, erro = falha)) {
+                Confirmacao.FEITA -> if (falha == null) impressos++ else comErro++
+                Confirmacao.RECUSADA -> recusadas++
+                Confirmacao.SEM_CONTATO ->
+                    return Resultado(impressos, comErro, recusadas, interrompido = true)
             }
-
-            if (falha == null) impressos++ else comErro++
         }
 
-        return Resultado(impressos, comErro)
+        return Resultado(impressos, comErro, recusadas)
     }
+
+    /** O que o servidor fez com a baixa. */
+    private enum class Confirmacao { FEITA, RECUSADA, SEM_CONTATO }
 
     /** O papel deste trabalho, ou o motivo de ele não ter saído. */
     private suspend fun tentar(trabalho: TrabalhoDeImpressao): String? {
@@ -87,19 +111,25 @@ class LoteDeImpressao(
         }
     }
 
-    /** `false` quando nem insistindo deu para falar com o servidor. */
-    private suspend fun confirmarTeimoso(id: String, ok: Boolean, erro: String?): Boolean {
+    /** Insiste no soluço de rede; para na primeira recusa, que não muda. */
+    private suspend fun confirmarTeimoso(id: String, ok: Boolean, erro: String?): Confirmacao {
         repeat(TENTATIVAS) { tentativa ->
             try {
                 confirmar(id, ok, erro)
-                return true
+                return Confirmacao.FEITA
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: Api.RegraDaCasa) {
+                // 409: a baixa é de outro aparelho, ou a fila mudou de estado.
+                return Confirmacao.RECUSADA
+            } catch (e: Api.RecusadoPeloServidor) {
+                // 400 e 404: trabalho que não existe mais, corpo que não serve.
+                return Confirmacao.RECUSADA
             } catch (e: Exception) {
                 if (tentativa < TENTATIVAS - 1) delay(300L shl tentativa)
             }
         }
-        return false
+        return Confirmacao.SEM_CONTATO
     }
 
     private companion object {
