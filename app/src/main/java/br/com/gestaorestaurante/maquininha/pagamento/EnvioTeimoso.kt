@@ -113,6 +113,33 @@ class TurnoVencido(mensagem: String) : EsperaACasa(mensagem)
  */
 class RecusaDefinitiva(mensagem: String) : Exception(mensagem)
 
+/**
+ * O que aconteceu com o reenvio de uma venda recusada.
+ *
+ * A tela precisa dizer três coisas diferentes, e cada uma manda a pessoa fazer
+ * outra coisa: parabéns e pronto; a mesma recusa (ou outra) de novo, e aí o
+ * motivo mudou e vale ler; ou ficou na fila, e some sozinha quando a rede
+ * voltar — sem ninguém apertar nada.
+ */
+sealed interface ResultadoDoReenvio {
+    /** O servidor recebeu: a venda saiu do aparelho. */
+    object Enviada : ResultadoDoReenvio
+
+    /** Recusada outra vez. O motivo é o de agora, não o de antes. */
+    data class Recusada(val motivo: String) : ResultadoDoReenvio
+
+    /**
+     * Voltou para a fila: rede fora, turno vencido ou caixa fechado.
+     *
+     * Não é fracasso — é o estado normal de quem espera. O escoamento a manda
+     * quando der, e ela sai da lista das recusadas de qualquer jeito.
+     */
+    object NaFila : ResultadoDoReenvio
+
+    /** Não há venda recusada com essa referência (já saiu, ou nunca houve). */
+    object NaoEncontrada : ResultadoDoReenvio
+}
+
 interface DepositoDePendentes {
     suspend fun ler(): List<PendenteDeEnvio>
     suspend fun gravar(fila: List<PendenteDeEnvio>)
@@ -287,6 +314,52 @@ class EnvioTeimoso(
         deposito.ler().filter { it.recusa != null }.sortedByDescending { it.cobradaEm }
 
     /**
+     * A casa consertou a causa: manda esta venda de novo.
+     *
+     * Recusa definitiva é o servidor dizendo "este corpo não serve **como
+     * está**" — e às vezes o que estava errado era do lado de fora: o aparelho
+     * configurado com o token da unidade errada, uma forma de pagamento que
+     * ninguém havia cadastrado, um defeito nosso que foi corrigido e
+     * publicado. Consertado o motivo, a venda passa a ser aceitável, e até
+     * agora o aparelho só sabia **esquecê-la** ("dar baixa"), obrigando a
+     * registrar à mão na retaguarda uma venda que o servidor aceitaria.
+     *
+     * Reenviar é seguro: o servidor reconhece a `referenciaExterna` e não
+     * registra duas vezes a mesma cobrança. O pior caso é a recusa voltar, com
+     * o motivo de agora.
+     *
+     * A venda volta para a fila antes da tentativa — e **continua lá** se a
+     * rede estiver fora ou a casa não estiver pronta. Assim ela escoa sozinha
+     * depois, sem ninguém apertar de novo.
+     */
+    suspend fun reenviar(referencia: String): ResultadoDoReenvio {
+        val alvo = tranca.withLock {
+            deposito.ler().firstOrNull { it.pagamento.referencia == referencia && it.recusa != null }
+        } ?: return ResultadoDoReenvio.NaoEncontrada
+
+        // De volta à fila de tentativas: sem isto o escoamento a ignoraria,
+        // porque é a marca de recusa que o faz pular esta venda.
+        limparRecusa(referencia)
+        val pendente = alvo.copy(recusa = null)
+
+        return try {
+            mandar(pendente.pagamento, pendente.cracha.ifBlank { null })
+            remover(pendente)
+            ResultadoDoReenvio.Enviada
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RecusaDefinitiva) {
+            val motivo = e.message ?: "O servidor recusou esta venda."
+            marcarRecusada(pendente, motivo)
+            ResultadoDoReenvio.Recusada(motivo)
+        } catch (e: EsperaACasa) {
+            ResultadoDoReenvio.NaFila
+        } catch (e: Exception) {
+            ResultadoDoReenvio.NaFila
+        }
+    }
+
+    /**
      * A casa resolveu esta na retaguarda: pode sair do aparelho.
      *
      * Só sai o que está recusado. Pendente não some por engano daqui — ele
@@ -299,6 +372,26 @@ class EnvioTeimoso(
                 deposito.gravar(
                     deposito.ler().filterNot {
                         it.pagamento.referencia == referencia && it.recusa != null
+                    }
+                )
+            }
+        }
+    }
+
+    /**
+     * Tira a marca de recusa, devolvendo a venda à fila de tentativas.
+     *
+     * Só a marca: a venda não se move e nada do conteúdo muda. O motivo antigo
+     * sai junto porque ele deixou de ser verdade no instante em que alguém
+     * decidiu tentar de novo — e, se a recusa voltar, quem escreve o motivo
+     * novo é a resposta nova.
+     */
+    private suspend fun limparRecusa(referencia: String) {
+        withContext(NonCancellable) {
+            tranca.withLock {
+                deposito.gravar(
+                    deposito.ler().map {
+                        if (it.pagamento.referencia == referencia) it.copy(recusa = null) else it
                     }
                 )
             }

@@ -7,6 +7,7 @@ import br.com.gestaorestaurante.maquininha.pagamento.EnvioTeimoso
 import br.com.gestaorestaurante.maquininha.pagamento.EsperaACasa
 import br.com.gestaorestaurante.maquininha.pagamento.PendenteDeEnvio
 import br.com.gestaorestaurante.maquininha.pagamento.RecusaDefinitiva
+import br.com.gestaorestaurante.maquininha.pagamento.ResultadoDoReenvio
 import br.com.gestaorestaurante.maquininha.pagamento.TurnoVencido
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -427,5 +428,113 @@ class EnvioTeimosoTest {
 
         assertEquals(listOf("venda-21"), deposito.referencias)
         assertEquals(1, envio.quantasPendentes())
+    }
+
+    /**
+     * A casa consertou a causa, e a venda passa.
+     *
+     * Recusa definitiva é "este corpo não serve **como está**", e às vezes o
+     * que estava errado era de fora: o aparelho com o token da unidade errada,
+     * uma forma que ninguém cadastrou, um defeito nosso já corrigido. Até
+     * agora o aparelho só sabia esquecer a venda; quem a registrasse de novo
+     * teria de fazê-lo à mão na retaguarda.
+     */
+    @Test
+    fun `reenviada depois do conserto, a recusada sai do aparelho`() = runTest {
+        val deposito = DepositoDeTeste()
+        deposito.fila = listOf(pendente("venda-30").copy(recusa = "Conta não encontrada."))
+        val envio = EnvioTeimoso(deposito) { _, _ -> recebido }
+
+        val r = envio.reenviar("venda-30")
+
+        assertEquals(ResultadoDoReenvio.Enviada, r)
+        assertEquals(emptyList<String>(), deposito.referencias)
+        assertEquals(0, envio.quantasRecusadas())
+    }
+
+    /** Recusada de novo: o motivo que fica é o de agora. */
+    @Test
+    fun `recusada outra vez, a venda volta marcada com o motivo novo`() = runTest {
+        val deposito = DepositoDeTeste()
+        deposito.fila = listOf(pendente("venda-31").copy(recusa = "Conta não encontrada."))
+        val envio = EnvioTeimoso(deposito) { _, _ ->
+            throw RecusaDefinitiva("Valor alto demais para uma venda.")
+        }
+
+        val r = envio.reenviar("venda-31")
+
+        assertEquals(ResultadoDoReenvio.Recusada("Valor alto demais para uma venda."), r)
+        assertEquals(1, envio.quantasRecusadas())
+        assertEquals("Valor alto demais para uma venda.", envio.recusadas().first().recusa)
+    }
+
+    /**
+     * Sem rede, o reenvio não fracassa: devolve a venda à fila.
+     *
+     * É a diferença que importa para quem está com o aparelho na mão — ela sai
+     * da lista das recusadas e some sozinha quando a rede voltar, sem ninguém
+     * apertar de novo.
+     */
+    @Test
+    fun `sem rede, a reenviada fica na fila e escoa depois`() = runTest {
+        val deposito = DepositoDeTeste()
+        deposito.fila = listOf(pendente("venda-32").copy(recusa = "Conta não encontrada."))
+        var rede = false
+        val envio = EnvioTeimoso(deposito) { _, _ ->
+            if (!rede) throw IOException("sem rede") else recebido
+        }
+
+        val r = envio.reenviar("venda-32")
+
+        assertEquals(ResultadoDoReenvio.NaFila, r)
+        assertEquals(0, envio.quantasRecusadas())
+        assertEquals(1, envio.quantasPendentes())
+
+        // A rede voltou: o escoamento a manda, sem ninguém tocar na tela.
+        rede = true
+        assertEquals(1, envio.escoar())
+        assertEquals(emptyList<String>(), deposito.referencias)
+    }
+
+    /** Turno vencido é espera, não recusa: mesma volta para a fila. */
+    @Test
+    fun `turno vencido no reenvio tambem devolve a venda para a fila`() = runTest {
+        val deposito = DepositoDeTeste()
+        deposito.fila = listOf(pendente("venda-33").copy(recusa = "Conta não encontrada."))
+        val envio = EnvioTeimoso(deposito) { _, _ -> throw TurnoVencido("Sessão do operador expirada.") }
+
+        val r = envio.reenviar("venda-33")
+
+        assertEquals(ResultadoDoReenvio.NaFila, r)
+        assertEquals(1, envio.quantasPendentes())
+    }
+
+    /**
+     * Reenviar só vale para quem está recusada.
+     *
+     * A que ainda espera a rede já vai ser enviada pelo escoamento; mandá-la
+     * daqui seria uma segunda tentativa simultânea da mesma venda, com a fila
+     * aberta no meio.
+     */
+    @Test
+    fun `reenviar nao mexe na venda que ainda espera a rede`() = runTest {
+        val deposito = DepositoDeTeste()
+        deposito.fila = listOf(pendente("venda-34"))
+        var idas = 0
+        val envio = EnvioTeimoso(deposito) { _, _ -> idas++; recebido }
+
+        val r = envio.reenviar("venda-34")
+
+        assertEquals(ResultadoDoReenvio.NaoEncontrada, r)
+        assertEquals(0, idas)
+        assertEquals(listOf("venda-34"), deposito.referencias)
+    }
+
+    @Test
+    fun `reenviar referencia que nao existe nao faz nada`() = runTest {
+        val deposito = DepositoDeTeste()
+        val envio = EnvioTeimoso(deposito) { _, _ -> recebido }
+
+        assertEquals(ResultadoDoReenvio.NaoEncontrada, envio.reenviar("nunca-houve"))
     }
 }

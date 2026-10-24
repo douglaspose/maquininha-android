@@ -128,6 +128,8 @@ class Acoes(
     val verRecusadas: () -> Unit,
     /** A casa resolveu aquela na retaguarda: tira do aparelho. */
     val darBaixaNaRecusada: (String) -> Unit,
+    /** A casa consertou a causa: manda aquela venda de novo. */
+    val reenviarRecusada: (String) -> Unit,
     val sairDosAjustes: () -> Unit,
     val voltar: () -> Unit,
     /** O botão de baixo do Android, que cada tela resolve do seu jeito. */
@@ -768,10 +770,25 @@ private fun TelaDasRecusadas(painel: Painel, acoes: Acoes) {
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.padding(top = 6.dp),
                         )
-                        TextButton(
-                            onClick = { baixando = venda.pagamento.referencia },
-                            modifier = Modifier.padding(top = 2.dp),
-                        ) { Text("Dar baixa") }
+                        /*
+                          Tentar de novo primeiro, e dar baixa depois.
+
+                          A ordem é a das consequências: reenviar é seguro — o
+                          servidor reconhece a referência e não duplica —, e
+                          dar baixa é esquecer a venda, o que só se faz depois
+                          de registrá-la à mão. O destrutivo não fica onde o
+                          dedo cai primeiro.
+                        */
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(
+                                onClick = { acoes.reenviarRecusada(venda.pagamento.referencia) },
+                                modifier = Modifier.padding(top = 2.dp),
+                            ) { Text("Tentar de novo") }
+                            TextButton(
+                                onClick = { baixando = venda.pagamento.referencia },
+                                modifier = Modifier.padding(top = 2.dp),
+                            ) { Text("Dar baixa") }
+                        }
                     }
                 }
             }

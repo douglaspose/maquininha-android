@@ -32,6 +32,7 @@ import br.com.gestaorestaurante.maquininha.pagamento.EnvioTeimoso
 import br.com.gestaorestaurante.maquininha.pagamento.PendenteDeEnvio
 import br.com.gestaorestaurante.maquininha.pagamento.EsperaACasa
 import br.com.gestaorestaurante.maquininha.pagamento.RecusaDefinitiva
+import br.com.gestaorestaurante.maquininha.pagamento.ResultadoDoReenvio
 import br.com.gestaorestaurante.maquininha.pagamento.TurnoVencido
 import br.com.gestaorestaurante.maquininha.pagamento.FormaDePagamento
 import br.com.gestaorestaurante.maquininha.pagamento.ResultadoDaCobranca
@@ -760,6 +761,54 @@ class ModeloDaTela(aplicacao: Application) : AndroidViewModel(aplicacao) {
                     recusadasPeloServidor = lista.size,
                     aviso = null,
                     recado = null,
+                )
+            }
+        }
+    }
+
+    /**
+     * A casa consertou a causa: manda a venda recusada de novo.
+     *
+     * O que estava errado podia ser de fora do aparelho — o token da unidade,
+     * uma forma de pagamento que ninguém havia cadastrado, um defeito nosso já
+     * publicado. Antes disto a única saída era "dar baixa" e registrar à mão
+     * na retaguarda uma venda que o servidor aceitaria.
+     *
+     * Cada desfecho fala uma língua diferente para quem está com o aparelho:
+     * saiu, foi recusada outra vez (e o motivo é o de agora), ou voltou para a
+     * fila e escoa sozinha quando a rede voltar.
+     */
+    fun reenviarRecusada(referencia: String) {
+        viewModelScope.launch {
+            val resultado = try {
+                envio.reenviar(referencia)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _painel.update { it.copy(aviso = e.message ?: "Não foi possível reenviar.") }
+                return@launch
+            }
+
+            val lista = envio.recusadas()
+            val recado = when (resultado) {
+                is ResultadoDoReenvio.Enviada -> "Venda enviada. O servidor registrou."
+                is ResultadoDoReenvio.NaFila -> "Na fila: ela sai sozinha quando a rede voltar."
+                is ResultadoDoReenvio.Recusada -> null
+                is ResultadoDoReenvio.NaoEncontrada -> "Esta venda já não está recusada."
+            }
+            _painel.update {
+                it.copy(
+                    // Vazia a lista, não há mais o que fazer nesta tela.
+                    estado = if (lista.isEmpty()) EstadoDaTela.Mesas else EstadoDaTela.Recusadas,
+                    recusadas = lista,
+                    recusadasPeloServidor = lista.size,
+                    pendentesDeEnvio = envio.quantasPendentes(),
+                    // A recusa nova é aviso, não recado: é o servidor dizendo
+                    // não outra vez, e a linha da venda já mostra o motivo.
+                    aviso = (resultado as? ResultadoDoReenvio.Recusada)?.let {
+                        r -> "Recusada de novo: ${r.motivo}"
+                    },
+                    recado = recado,
                 )
             }
         }
